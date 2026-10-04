@@ -5,12 +5,12 @@
 2. 边沿纪律：d() 之后、tick() 之前输出仍是旧值；tick 时刻才统一翻转
    （这正是同拍读写交换能成功的原因，见 test_swap_with_clock）
 
-运行（在 SEQ 目录下）：python test_seq.py
+运行（项目根目录）：python -m SEQ.test_seq
 """
 import sys
 
-from dff import DFlipFlop, Clock
-from register import Register
+from .dff import DFlipFlop, Clock
+from .register import Register
 
 TOTAL = 0
 FAILS = 0

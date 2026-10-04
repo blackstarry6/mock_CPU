@@ -3,7 +3,7 @@
 结构：半加器 → 一位全加器 → 行波进位链。
 减法通过补码实现：A - B = A + ~B + 1。
 """
-from gate import AND, OR, XOR, NOT
+from .gate import AND, OR, XOR, NOT
 
 
 def semi_adder_one(x1, x2):

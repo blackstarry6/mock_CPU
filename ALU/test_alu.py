@@ -1,12 +1,12 @@
 """ALU 穷举测试：全部 256x256 输入与 Python 原生运算逐项对照。
 
-运行（在 ALU 目录下）：python test_alu.py
-MUL 为 16 位门级仿真、较慢，整轮约 1~2 分钟属正常。
+运行（项目根目录）：python -m ALU.test_alu
+MUL 为 16 位门级仿真、较慢，整轮约 5 分钟属正常。
 """
 import sys
 import time
 
-from alu import alu
+from .alu import alu
 
 TOTAL = 0
 FAILS = 0

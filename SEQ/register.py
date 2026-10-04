@@ -6,7 +6,7 @@
 写使能语义：调用 d() 即声明本拍写入，不调用即保持（对应真实寄存器堆
 的 WE 控制信号：译码器每拍决定哪个寄存器的 WE 为 1）。
 """
-from dff import DFlipFlop
+from .dff import DFlipFlop
 
 
 class Register:

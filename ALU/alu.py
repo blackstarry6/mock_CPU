@@ -11,8 +11,8 @@
 """
 from functools import reduce
 
-from gate import AND, OR, XOR, NOT
-from full_adder import add8, sub8, to_bits, from_bits, ripple_add
+from .gate import AND, OR, XOR, NOT
+from .full_adder import add8, sub8, to_bits, from_bits, ripple_add
 
 WORD = 8
 MASK = 0xFF
