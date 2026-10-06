@@ -30,6 +30,37 @@
 - `知识存档.md` — 从组合逻辑到时序逻辑的设计笔记
 - `后续工作.md` — 路线图与技术债
 
+## 架构与数据通路
+
+分层依赖（自底向上搭建，箭头方向即 import 方向，永不反向）：
+
+```
+第 5 层 集成        CPU/cpu.py                          ← 唯一 import 四个部件包的文件（塔尖）
+第 4 层 规格与语义   CPU/isa.py · CPU/control.py          ← 零依赖的纯定义（指令编码 / 微程序表）
+第 3 层 系统部件     SEQ/register_file.py · SEQ/pc.py · MEM/ram.py
+第 2 层 功能部件     SEQ/register.py · COMB/mux.py+decoder.py · ALU/full_adder.py · ALU/alu.py
+第 1 层 原语        SEQ/dff.py（记忆之根）· ALU/gate.py（组合之根）
+```
+
+三条架构铁律：依赖严格单向（部件包不知道 CPU 的存在）；isa/control
+不依赖任何部件（纯规格，换实现不动规格）；跨包 import 仅 6 条（耦合面刻意收窄）。
+
+一条指令的旅程（`CPU.step()` 五步，声明与提交分离）：
+
+```
+PC ─地址→ RAM.read×2 ─op,arg→ isa.decode → control.signals（微码六信号）
+                                             │
+RF.read（门级 MUX 译码选择）─A,B→ ALU ─结果+标志┤
+      │                             ├→ RF.write / RAM.write（声明）
+      │                             └→ 4×DFF 标志位（声明）
+      └→ PC 下一拍：add8(pc,2) 顺序 / load(目标) 跳转（声明）
+                              ↓
+                   clk.tick() ← 全机唯一提交点：PC、寄存器、RAM、标志同时翻转
+```
+
+测试金字塔：ALU 197 万项穷举打底，向上 COMB 109、SEQ 18+23+9、MEM 11、
+CPU 222——底层全绿，上层失败只需查上层。
+
 ## 运行（包结构：全部在项目根目录、用 -m 运行）
 
 ```bash
