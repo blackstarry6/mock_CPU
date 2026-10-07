@@ -27,6 +27,7 @@
   - `control.py` 控制器（"微程序 ROM"查找表 + 跳转条件判断；CMP/INC/DEC 派生）
   - `cpu.py` 整机接线 + step()/run()（一拍一条指令，统一提交）
   - `test_cpu.py` 单指令 → 条件分支 → 循环程序差分（222 项断言）
+- `first_program.py` — 入门示例：带指令跟踪的阶乘循环程序（见「第一个程序」）
 - `知识存档.md` — 从组合逻辑到时序逻辑的设计笔记
 - `后续工作.md` — 路线图与技术债
 
@@ -73,6 +74,35 @@ python -m SEQ.test_register_file
 python -m SEQ.test_pc
 python -m MEM.test_ram
 ```
+
+## 第一个程序
+
+`first_program.py` 是上手示例：用助记符辅助函数拼出"5! = 120"的阶乘循环，
+带指令跟踪运行，结果写入内存 0x80。在项目根目录执行 `python first_program.py` 即可。
+核心骨架（每条指令恰好 2 字节，第 k 条位于地址 2k——**注释标地址、跳转目标按此手算**，
+这是手工汇编的基本功）：
+
+```python
+from CPU import isa
+from CPU.cpu import CPU
+
+prog = (isa.I_LDI(0, 5) +          # 0x00: R0 = n = 5
+        isa.I_LDI(1, 1) +          # 0x02: R1 = acc = 1
+        isa.I_ALU("MUL", 1, 0) +   # 0x04: acc *= n
+        isa.I_UN("DEC", 0) +       # 0x06: n -= 1（更新标志）
+        isa.I_JMP("JNZ", 0x04) +   # 0x08: n≠0 则回 0x04
+        isa.I_ST(1, 0x80) +        # 0x0A: 结果写入内存 0x80
+        isa.I_HALT())              # 0x0C
+
+cpu = CPU(prog)
+n, halted = cpu.run(trace=True)    # 逐条打印指令、寄存器与标志
+print(cpu.rf.read(1), cpu.ram.read(0x80), cpu.flags())
+```
+
+写自己的程序就是这三步：**`isa.I_*` 拼字节 → `CPU(prog)` 装载 → `run(trace=True)` 执行**。
+随时用 `cpu.rf.read(i)` / `cpu.ram.read(addr)` / `cpu.flags()` 观察状态；
+单步调试可循环调用 `cpu.step()`。约定：程序放低地址、数据从 0x80 起，
+256 字节共用一块内存。
 
 ## 指令集（统一双字节：操作码 + 操作数字节）
 
