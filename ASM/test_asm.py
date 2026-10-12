@@ -66,6 +66,18 @@ def test_labels_directives():
           isa.I_UN("DEC", 0) + isa.I_JMP("JNZ", 0))
 
 
+def test_label_rename():
+    """蜕变测试：标号改名（引用同步改）→ 机器码逐字节不变。
+
+    其他断言验证"标号解析对不对"，这条验证"名字本身没有泄漏进机器码"——
+    名字只是翻译期的脚手架，查表换成地址后即抹除。
+    """
+    base = assemble("loop: DEC R0\nJNZ loop")
+    for name in ("looop", "My_42nd_Label_", "_", "x"):
+        check(f"标号改名不变性 {name!r}",
+              assemble(f"{name}: DEC R0\nJNZ {name}"), base)
+
+
 # ---------- ③ 错误用例：必须带行号地炸 ----------
 
 def test_errors():
@@ -130,6 +142,7 @@ def main():
     for name, fn in [
         ("编码差分", test_encode_diff),
         ("标号与伪指令", test_labels_directives),
+        ("标号改名不变性", test_label_rename),
         ("错误用例", test_errors),
         ("端到端上机", test_end_to_end),
     ]:
