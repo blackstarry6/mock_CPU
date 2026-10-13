@@ -12,7 +12,8 @@
   b_from  B 操作数来源：ONE=常数 1 / RF_OTHER=寄存器 / None=不用
   dest    结果去向：RF=写回寄存器 / MEM=写内存 / None=丢弃（如 CMP）
   flags   是否更新标志位
-  jump    跳转条件名；None=顺序执行（PC+2）；"HALT"=停机
+  jump    PC 下一拍：None=顺序 +2 / 条件名 / "CALL"=压返回地址并跳 /
+          "RET"=弹返回地址 / "HALT"=停机
 """
 from collections import namedtuple
 
@@ -46,6 +47,9 @@ MICROCODE = {
     "JN":  Signals(None, None, None, None, False, "JN"),
     "JNN": Signals(None, None, None, None, False, "JNN"),
     "JV":  Signals(None, None, None, None, False, "JV"),
+    # ---- 子程序：CALL 压返回地址并跳，RET 弹回（硬件栈，6502 JSR/RTS 同构）----
+    "CALL": Signals(None, None, None, None, False, "CALL"),
+    "RET":  Signals(None, None, None, None, False, "RET"),
     # ---- 停机：把时钟关掉 ----
     "HALT": Signals(None, None, None, None, False, "HALT"),
 }

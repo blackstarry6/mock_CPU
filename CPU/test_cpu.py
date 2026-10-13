@@ -40,6 +40,8 @@ def test_isa():
             check(f"{name} R{r}", isa.decode(*isa.I_UN(name, r)), (name, r, None))
     for name in isa.JUMPS:
         check(f"{name}", isa.decode(*isa.I_JMP(name, 0x42)), (name, None, 0x42))
+    check("CALL", isa.decode(*isa.I_CALL(0x42)), ("CALL", None, 0x42))
+    check("RET", isa.decode(*isa.I_RET()), ("RET", None, None))
     check("HALT", isa.decode(*isa.I_HALT()), ("HALT", None, None))
     check("操作码表与控制表对齐", set(isa.MNEMONICS) == set(control.MICROCODE), True)
     try:
@@ -200,11 +202,67 @@ def test_fibonacci():
         check(f"fib({k}) 停机", h, True)
 
 
+# ---------- ⑤ 子程序：CALL/RET 与硬件栈 ----------
+
+def test_subroutines():
+    """调用/返回、多处调用、嵌套、递归；SP 必须全程归位。"""
+    # 基本：调用 → 执行 → 返回到 CALL 的下一条
+    prog = (isa.I_LDI(0, 7) +
+            isa.I_CALL(0x08) +              # 0x02
+            isa.I_LDI(1, 1) +               # 0x04：返回后应执行（返回点正确的证据）
+            isa.I_HALT() +                  # 0x06
+            isa.I_LDI(2, 9) + isa.I_RET())  # 0x08: 子程序
+    cpu, _, h = run_prog(prog)
+    check("调用·子程序执行", cpu.rf.read(2), 9)
+    check("调用·返回点正确", cpu.rf.read(1), 1)
+    check("调用·SP 归零", cpu.sp.value, 0)
+
+    # 同一子程序被两处调用：各自返回各自的现场
+    prog = (isa.I_CALL(0x0A) +              # 0x00 → 回 0x02
+            isa.I_CALL(0x0A) +              # 0x02 → 回 0x04
+            isa.I_HALT() +                  # 0x04
+            [0, 0, 0, 0] +                  # 0x06-0x09 填充
+            isa.I_UN("INC", 4) + isa.I_RET())   # 0x0A: 子程序
+    cpu, _, h = run_prog(prog)
+    check("两处调用·各回各家", (cpu.rf.read(4), cpu.sp.value, h), (2, 0, True))
+
+    # 嵌套 A→B→C：三层返回地址同时入栈，LIFO 逐层解开
+    prog = (isa.I_LDI(1, 1) + isa.I_LDI(2, 2) + isa.I_LDI(3, 3) +
+            isa.I_CALL(0x0E) +              # 0x06: A 调 B
+            isa.I_ST(1, 0x92) +             # 0x08: B 返回后执行（A 还活着）
+            isa.I_HALT() +                  # 0x0A
+            [0, 0] +                        # 0x0C-0D 填充
+            isa.I_CALL(0x14) +              # 0x0E: B 调 C
+            isa.I_ST(2, 0x91) +             # 0x10: C 返回后执行（B 还活着）
+            isa.I_RET() +                   # 0x12
+            isa.I_ST(3, 0x90) + isa.I_RET())   # 0x14: C
+    cpu, _, h = run_prog(prog)
+    check("嵌套·C 执行", cpu.ram.read(0x90), 3)
+    check("嵌套·B 在 C 返回后继续", cpu.ram.read(0x91), 2)
+    check("嵌套·A 在 B 返回后继续", cpu.ram.read(0x92), 1)
+    check("嵌套·SP 归零", cpu.sp.value, 0)
+
+    # 递归求和 sum(1..n)：下降前先累加（R1 += R0），无需调用后局部变量
+    for n, want in [(1, 1), (5, 15), (10, 55), (50, 1275 & 0xFF)]:
+        prog = (isa.I_LDI(0, n) + isa.I_LDI(1, 0) + isa.I_LDI(5, 0) +
+                isa.I_CALL(0x0A) +          # 0x06
+                isa.I_HALT() +              # 0x08
+                isa.I_ALU("CMP", 0, 5) +    # 0x0A: 子程序 sum：n==0？
+                isa.I_JMP("JZ", 0x14) +     # 0x0C → 直达 RET
+                isa.I_ALU("ADD", 1, 0) +    # 0x0E: R1 += n
+                isa.I_UN("DEC", 0) +        # 0x10
+                isa.I_CALL(0x0A) +          # 0x12: 递归
+                isa.I_RET())                # 0x14
+        cpu, _, h = run_prog(prog)
+        check(f"递归 sum({n})", (cpu.rf.read(1), cpu.sp.value, h), (want, 0, True))
+
+
 def main():
     for name, fn in [
         ("ISA 编解码往返", test_isa),
         ("单指令基本行为", test_single),
         ("条件分支", test_branches),
+        ("子程序 CALL/RET", test_subroutines),
         ("循环累加差分", test_loop_sum),
         ("循环乘法差分", test_loop_mul),
         ("斐波那契差分", test_fibonacci),

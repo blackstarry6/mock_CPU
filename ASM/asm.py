@@ -46,6 +46,8 @@ _SIGS.update({name: (("reg",), lambda r, _n=name: isa.I_UN(_n, r))
               for name in isa.UN_OPS})
 _SIGS.update({name: (("target",), lambda t, _n=name: isa.I_JMP(_n, t))
               for name in isa.JUMPS})
+_SIGS["CALL"] = (("target",), isa.I_CALL)
+_SIGS["RET"] = ((), isa.I_RET)
 _SIGS["HALT"] = ((), isa.I_HALT)
 
 _LABEL_RE = re.compile(r"^([A-Za-z_]\w*)\s*:\s*(.*)$")

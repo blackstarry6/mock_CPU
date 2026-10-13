@@ -29,7 +29,7 @@
   - `test_cpu.py` 单指令 → 条件分支 → 循环程序差分（222 项断言）
 - `ASM/` — 迷你汇编器（工具层，只依赖 isa，零机器改动）
   - `asm.py` 两遍扫描：标号自动解析、`.org`/`.db` 伪指令、CLI（`--run` 上机执行）
-  - `test_asm.py` 152 项断言（编码差分/标号/错误/端到端）；`example.asm` 示例源码
+  - `test_asm.py` 161 项断言（编码差分/标号/错误/端到端）；`example.asm`、`sub_demo.asm`（递归求和）示例
 - `first_program.py` — 入门示例：带指令跟踪的阶乘循环程序（见「第一个程序」）
 - `second_hello.py` — 第二个示例：内存映射 I/O + 自修改代码打印字符串（见「第二个程序」）
 - `third_screen.py` — 第三个示例：帧缓冲"屏幕" + 字符流/回车端口（见「第三个程序」）
@@ -77,6 +77,7 @@ python -m CPU.test_cpu      # CPU 测试（含斐波那契等循环程序差分�
 python -m ASM.test_asm      # 汇编器测试（152 项断言，瞬时）
 python -m ASM.asm ASM/example.asm        # 汇编：打印机器码 + 反汇编
 python -m ASM.asm ASM/example.asm --run  # 汇编 + 上机执行（带跟踪）
+python -m ASM.asm ASM/sub_demo.asm --run # 递归求和演示（CALL/RET 硬件栈）
 python -m ALU.test_alu      # ALU 穷举测试（约 5 分钟）
 python -m COMB.test_comb    # 组合部件测试（瞬时）
 python -m SEQ.test_seq      # 时序行为测试（瞬时）
@@ -179,6 +180,7 @@ LDI/MOV/LD/ST   数据传送（立即数/寄存器/内存）
 ADD SUB AND OR XOR MUL CMP   R0~R7 寄存器运算，CMP 只更新标志不写回
 INC DEC SHL SHR 单目运算（INC/DEC 即 B=1 的 ADD/SUB）
 JMP JZ JNZ JC JNC JN JNN JV 条件跳转（消费 Z/N/C/V）
+CALL/RET 子程序调用与返回（硬件栈：SP 空栈=0，返回地址压栈，栈从 0xFF 向下生长）
 HALT 停机；0xF8 预留 DIV
 ```
 
@@ -213,9 +215,13 @@ python -m ASM.asm ASM/example.asm --run    # 翻译 + 上机执行（带跟踪�
 ## 关键约定
 
 - 8 位字宽、LSB-first 位列表、超出位宽自动截断
+- 新机状态确定性全零（8 寄存器/内存/标志/SP 从 0 出发）——测试中寄存器作
+  **计数器**用（断言读增量）可依赖零起点免初始化；作**数据载体**用
+  （值本身是断言内容）则必须显式 `LDI` 装值
 - 时序纪律：组合阶段"读旧值 + d()/write() 声明"，时钟沿 tick() 统一提交；
   同拍读到的永远是旧值
 - 标志位 Z/N/C/V（减法 C 为借位取反）；乘法 8x8 → 16 位（存低字节，C=高字节非 0）
+- 硬件栈：SP 空栈 = 0，PUSH 即 SP−1 再写（回绕生长到 0xFF），无溢出保护
 - 依赖方向自底向上：gate → full_adder → alu；dff → register → register_file/pc；
   部件包不知道 CPU 的存在
 
@@ -228,5 +234,6 @@ python -m ASM.asm ASM/example.asm --run    # 翻译 + 上机执行（带跟踪�
 - [x] 存储部件：寄存器堆 / PC / RAM（MUX 与译码器首次登场）
 - [x] 指令集与控制器：ISA / 微程序表 / 整机跑通循环程序
 - [x] 迷你汇编器 ASM/：两遍扫描、标号自动解析、`.org`/`.db`、CLI `--run`
-- [ ] 阶段四：整机增强与验证（CALL/RET 与硬件栈、ADC/SBB、变长指令、多周期状态机等可选扩展）
+- [x] CALL/RET 与硬件栈：子程序、嵌套调用、递归（236+161 项断言护体）
+- [ ] 阶段四余项：ADC/SBB、变长指令、多周期状态机、PUSH/POP 等可选扩展
 

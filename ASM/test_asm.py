@@ -34,6 +34,8 @@ def test_encode_diff():
             check(f"{name} R{r}", assemble(f"{name} R{r}"), isa.I_UN(name, r))
     for name in isa.JUMPS:
         check(f"{name}", assemble(f"{name} 0x42"), isa.I_JMP(name, 0x42))
+    check("CALL", assemble("CALL 0x42"), isa.I_CALL(0x42))
+    check("RET", assemble("RET"), isa.I_RET())
     check("HALT", assemble("HALT"), isa.I_HALT())
     check("十六进制立即数", assemble("LDI R0, #0x5A"), isa.I_LDI(0, 0x5A))
     check("小写与注释", assemble("ldi r2, #7 ; 装载\n"), isa.I_LDI(2, 7))
@@ -136,6 +138,28 @@ def test_end_to_end():
     check("累加 R1=15", cpu.rf.read(1), 15)
     check("存内存 0x90", cpu.ram.read(0x90), 15)
     check("取数据区字符", cpu.rf.read(2), ord("H"))
+
+    # 子程序与递归：标号解析 CALL/RET，递归求和 1..10
+    src = """
+        LDI R0, #10
+        LDI R1, #0
+        LDI R5, #0
+        CALL sum
+        HALT
+    sum:                    ; sum(n)：R1 += n 后递归，n==0 直达 RET
+        CMP R0, R5
+        JZ  done
+        ADD R1, R0
+        DEC R0
+        CALL sum            ; 递归——栈自动记路，标号自动解析
+    done:
+        RET
+    """
+    cpu = CPU(assemble(src))
+    n, halted = cpu.run()
+    check("递归 停机", halted, True)
+    check("递归 sum(10)=55", cpu.rf.read(1), 55)
+    check("递归 SP 归零", cpu.sp.value, 0)
 
 
 def main():

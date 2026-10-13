@@ -10,6 +10,8 @@
     0x20-0x57  ADD/SUB/AND/OR/XOR/MUL/CMP Rd, Rs（7 种运算 × 8 目标寄存器）
     0x58-0x77  INC/DEC/SHL/SHR Ri（4 种单目 × 8 寄存器）
     0x78-0x7F  JMP/JZ/JNZ/JC/JNC/JN/JNN/JV [target]
+    0xE0       CALL [target]       调用子程序（返回地址压栈）
+    0xE1       RET                 返回（弹出返回地址装回 PC）
     0xF0       HALT
     0xF8       预留 DIV（对齐史实：8 位机无硬件除法）
 
@@ -18,6 +20,7 @@
 
 OP_HALT = 0xF0
 OP_DIV_RESERVED = 0xF8        # 预留：将来扩展除法
+OP_CALL, OP_RET = 0xE0, 0xE1  # 子程序：调用 / 返回
 
 _LDI_BASE, _MOV_BASE, _LD_BASE, _ST_BASE = 0x00, 0x08, 0x10, 0x18
 _ALU_BASE, _UN_BASE, _JMP_BASE = 0x20, 0x58, 0x78
@@ -25,7 +28,7 @@ _ALU_BASE, _UN_BASE, _JMP_BASE = 0x20, 0x58, 0x78
 ALU_OPS = ("ADD", "SUB", "AND", "OR", "XOR", "MUL", "CMP")
 UN_OPS = ("INC", "DEC", "SHL", "SHR")
 JUMPS = ("JMP", "JZ", "JNZ", "JC", "JNC", "JN", "JNN", "JV")
-MNEMONICS = ("LDI", "MOV", "LD", "ST") + ALU_OPS + UN_OPS + JUMPS + ("HALT",)
+MNEMONICS = ("LDI", "MOV", "LD", "ST") + ALU_OPS + UN_OPS + JUMPS + ("CALL", "RET", "HALT")
 
 
 # ---------- 汇编辅助：助记符 → 机器码（每条两字节） ----------
@@ -51,6 +54,12 @@ def I_UN(name, r):
 
 def I_JMP(name, target):
     return [_JMP_BASE | JUMPS.index(name), target & 0xFF]
+
+def I_CALL(target):
+    return [OP_CALL, target & 0xFF]
+
+def I_RET():
+    return [OP_RET, 0]
 
 def I_HALT():
     return [OP_HALT, 0]
@@ -79,6 +88,10 @@ def decode(op, arg):
         return UN_OPS[(op - _UN_BASE) >> 3], op & 7, None
     if _JMP_BASE <= op <= 0x7F:
         return JUMPS[op - _JMP_BASE], None, arg & 0xFF
+    if op == OP_CALL:
+        return "CALL", None, arg & 0xFF
+    if op == OP_RET:
+        return "RET", None, None
     if op == OP_HALT:
         return "HALT", None, None
     raise ValueError(f"非法操作码 0x{op:02X}")
@@ -101,4 +114,8 @@ def disasm(op, arg):
         return f"{name} R{reg}"
     if name in JUMPS:
         return f"{name} {other:#04x}"
+    if name == "CALL":
+        return f"CALL {other:#04x}"
+    if name == "RET":
+        return "RET"
     return "HALT"

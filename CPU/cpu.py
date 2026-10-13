@@ -5,12 +5,17 @@
 一拍内严格走时序纪律：读旧值 → 组合计算 → d()/write() 声明 →
 clk.tick() 统一提交——同拍一致性由结构保证。
 
+硬件栈（CALL/RET 用）：SP 是普通 8 位寄存器，空栈时 SP=0；PUSH 即
+"SP 先减 1（经减法器，回绕）、再写 mem[SP]"，POP 即"先读 mem[SP]、
+SP 再加 1"——栈从 0xFF 向下生长。栈溢出无保护（与真实 8 位机一致）。
+
 HALT 的语义是"停时钟"：仿真层布尔标志，不经时钟纪律。
 """
 from ALU.alu import alu
-from ALU.full_adder import add8
+from ALU.full_adder import add8, sub8
 from SEQ.dff import DFlipFlop, Clock
 from SEQ.pc import ProgramCounter
+from SEQ.register import Register
 from SEQ.register_file import RegisterFile
 from MEM.ram import RAM
 from . import isa, control
@@ -24,11 +29,12 @@ class CPU:
         self.ram = RAM()
         self.flag_z, self.flag_n = DFlipFlop(), DFlipFlop()
         self.flag_c, self.flag_v = DFlipFlop(), DFlipFlop()
+        self.sp = Register("SP", init=0)          # 栈指针：空栈=0，回绕生长到 0xFF
         self.halted = False
         self.instr_count = 0
         if program:
             self.ram.load_program(program, base)
-        self.clk.attach(self.pc, self.rf, self.ram,
+        self.clk.attach(self.pc, self.rf, self.ram, self.sp,
                         self.flag_z, self.flag_n, self.flag_c, self.flag_v)
 
     # ---- 状态观察（组合读） ----
@@ -41,6 +47,7 @@ class CPU:
         """整机状态快照（调试/测试用）。"""
         return {
             "pc": self.pc.value,
+            "sp": self.sp.value,
             "regs": [self.rf.read(i) for i in range(8)],
             "flags": self.flags(),
             "halted": self.halted,
@@ -70,10 +77,21 @@ class CPU:
             self.rf.write(reg, result)
         elif sig.dest == "MEM":
             self.ram.write(other, result)
-        # ④ PC 下一拍：停机 / 跳转 / 顺序 +2（经加法器，255 回绕）
+        # ④ PC 下一拍：停机 / 子程序 / 跳转 / 顺序 +2（经加法器，255 回绕）
         if sig.jump == "HALT":
             self.halted = True
             return False
+        elif sig.jump == "CALL":
+            ret, _, _ = add8(self.pc.value, 2)        # 返回地址 = CALL 的下一条
+            sp_new, _, _ = sub8(self.sp.value, 1)     # SP-1（0 回绕到 0xFF）
+            self.ram.write(sp_new, ret)               # 声明压栈
+            self.sp.d(sp_new)                         # 声明栈指针前移
+            self.pc.load(other)                       # 声明跳入子程序
+        elif sig.jump == "RET":
+            ret = self.ram.read(self.sp.value)        # 组合读当前栈顶（旧值）
+            sp_new, _, _ = add8(self.sp.value, 1)     # SP+1
+            self.sp.d(sp_new)
+            self.pc.load(ret)                         # 沿记下的路回家
         elif sig.jump is not None and control.condition_met(sig.jump, self.flags()):
             self.pc.load(other)
         else:
