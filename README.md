@@ -29,7 +29,8 @@
   - `test_cpu.py` 单指令 → 条件分支 → 循环程序差分（222 项断言）
 - `ASM/` — 迷你汇编器（工具层，只依赖 isa，零机器改动）
   - `asm.py` 两遍扫描：标号自动解析、`.org`/`.db` 伪指令、CLI（`--run` 上机执行）
-  - `test_asm.py` 161 项断言（编码差分/标号/错误/端到端）；`example.asm`、`sub_demo.asm`（递归求和）示例
+  - `test_asm.py` 180 项断言（编码差分/标号/错误/端到端）；`example.asm`、
+    `sub_demo.asm`（递归求和）、`pushpop_demo.asm`（PUSH/POP 阶乘）示例
 - `first_program.py` — 入门示例：带指令跟踪的阶乘循环程序（见「第一个程序」）
 - `second_hello.py` — 第二个示例：内存映射 I/O + 自修改代码打印字符串（见「第二个程序」）
 - `third_screen.py` — 第三个示例：帧缓冲"屏幕" + 字符流/回车端口（见「第三个程序」）
@@ -78,6 +79,7 @@ python -m ASM.test_asm      # 汇编器测试（152 项断言，瞬时）
 python -m ASM.asm ASM/example.asm        # 汇编：打印机器码 + 反汇编
 python -m ASM.asm ASM/example.asm --run  # 汇编 + 上机执行（带跟踪）
 python -m ASM.asm ASM/sub_demo.asm --run # 递归求和演示（CALL/RET 硬件栈）
+python -m ASM.asm ASM/pushpop_demo.asm --run # 定义直译版阶乘（PUSH/POP 保存现场）
 python -m ALU.test_alu      # ALU 穷举测试（约 5 分钟）
 python -m COMB.test_comb    # 组合部件测试（瞬时）
 python -m SEQ.test_seq      # 时序行为测试（瞬时）
@@ -181,6 +183,7 @@ ADD SUB AND OR XOR MUL CMP   R0~R7 寄存器运算，CMP 只更新标志不写�
 INC DEC SHL SHR 单目运算（INC/DEC 即 B=1 的 ADD/SUB）
 JMP JZ JNZ JC JNC JN JNN JV 条件跳转（消费 Z/N/C/V）
 CALL/RET 子程序调用与返回（硬件栈：SP 空栈=0，返回地址压栈，栈从 0xFF 向下生长）
+PUSH/POP 压栈/弹栈（保存与恢复现场——递归中"活过下一次调用"的保障，序言/尾声雏形）
 HALT 停机；0xF8 预留 DIV
 ```
 
@@ -235,5 +238,6 @@ python -m ASM.asm ASM/example.asm --run    # 翻译 + 上机执行（带跟踪�
 - [x] 指令集与控制器：ISA / 微程序表 / 整机跑通循环程序
 - [x] 迷你汇编器 ASM/：两遍扫描、标号自动解析、`.org`/`.db`、CLI `--run`
 - [x] CALL/RET 与硬件栈：子程序、嵌套调用、递归（236+161 项断言护体）
-- [ ] 阶段四余项：ADC/SBB、变长指令、多周期状态机、PUSH/POP 等可选扩展
+- [x] PUSH/POP：栈上保存/恢复现场；定义直译版阶乘与两次递归的 fib 验收（272+180 项断言）
+- [ ] 阶段四余项：ADC/SBB、变长指令、多周期状态机等可选扩展
 

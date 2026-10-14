@@ -77,6 +77,10 @@ class CPU:
             self.rf.write(reg, result)
         elif sig.dest == "MEM":
             self.ram.write(other, result)
+        elif sig.dest == "PUSH":          # 压栈即写：声明 SP-1 并写新栈顶
+            sp_new = sub8(self.sp.value, 1)[0]
+            self.ram.write(sp_new, result)
+            self.sp.d(sp_new)
         # ④ PC 下一拍：停机 / 子程序 / 跳转 / 顺序 +2（经加法器，255 回绕）
         if sig.jump == "HALT":
             self.halted = True
@@ -127,6 +131,10 @@ class CPU:
             return self.rf.read(reg)
         if sig.a_from == "RF_OTHER":
             return self.rf.read(other & 7)
+        if sig.a_from == "POP":           # 弹栈即取数：读旧栈顶，声明 SP+1
+            value = self.ram.read(self.sp.value)
+            self.sp.d(add8(self.sp.value, 1)[0])
+            return value
         return None
 
     def _pick_b(self, sig, other):

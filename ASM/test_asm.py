@@ -36,6 +36,9 @@ def test_encode_diff():
         check(f"{name}", assemble(f"{name} 0x42"), isa.I_JMP(name, 0x42))
     check("CALL", assemble("CALL 0x42"), isa.I_CALL(0x42))
     check("RET", assemble("RET"), isa.I_RET())
+    for r in range(8):
+        check(f"PUSH R{r}", assemble(f"PUSH R{r}"), isa.I_PUSH(r))
+        check(f"POP R{r}", assemble(f"POP R{r}"), isa.I_POP(r))
     check("HALT", assemble("HALT"), isa.I_HALT())
     check("十六进制立即数", assemble("LDI R0, #0x5A"), isa.I_LDI(0, 0x5A))
     check("小写与注释", assemble("ldi r2, #7 ; 装载\n"), isa.I_LDI(2, 7))
@@ -160,6 +163,40 @@ def test_end_to_end():
     check("递归 停机", halted, True)
     check("递归 sum(10)=55", cpu.rf.read(1), 55)
     check("递归 SP 归零", cpu.sp.value, 0)
+
+    # PUSH/POP 验收：递归 fib（两次递归调用，靠栈保存现场）
+    src = """
+        LDI R5, #0
+        LDI R6, #1
+        LDI R0, #10
+        CALL fib
+        HALT
+    fib:                    ; 进 R0=n，出 R1=fib(n)
+        CMP  R0, R5         ; n==0？
+        JZ   zero
+        CMP  R0, R6         ; n==1？
+        JZ   one
+        PUSH R0             ; ★ 存 n
+        DEC  R0
+        CALL fib            ; R1 = fib(n-1)
+        POP  R0
+        PUSH R1             ; ★ 存第一次结果
+        DEC  R0
+        DEC  R0
+        CALL fib            ; R1 = fib(n-2)
+        POP  R2
+        ADD  R1, R2
+        RET
+    zero: LDI R1, #0
+        RET
+    one:  LDI R1, #1
+        RET
+    """
+    cpu = CPU(assemble(src))
+    n, halted = cpu.run()
+    check("递归 fib(10)=55", cpu.rf.read(1), 55)
+    check("递归 fib SP 归零", cpu.sp.value, 0)
+    check("递归 fib 停机", halted, True)
 
 
 def main():

@@ -7,10 +7,11 @@
 控制信号的含义：
   a_from  A 操作数来源：IMM=操作数字节 / MEM=内存[操作数字节] /
           RF_SELF=操作码低 3 位指定的寄存器（读-改-写目的；ST 时为源寄存器）/
-          RF_OTHER=操作数字节指定的寄存器
+          RF_OTHER=操作数字节指定的寄存器 / POP=弹栈（取数即弹栈）
   alu_op  要做的 ALU 运算；None=数据直通（不经 ALU）
   b_from  B 操作数来源：ONE=常数 1 / RF_OTHER=寄存器 / None=不用
-  dest    结果去向：RF=写回寄存器 / MEM=写内存 / None=丢弃（如 CMP）
+  dest    结果去向：RF=写回寄存器 / MEM=写内存 / PUSH=压栈（写即压栈）/
+          None=丢弃（如 CMP）
   flags   是否更新标志位
   jump    PC 下一拍：None=顺序 +2 / 条件名 / "CALL"=压返回地址并跳 /
           "RET"=弹返回地址 / "HALT"=停机
@@ -47,6 +48,9 @@ MICROCODE = {
     "JN":  Signals(None, None, None, None, False, "JN"),
     "JNN": Signals(None, None, None, None, False, "JNN"),
     "JV":  Signals(None, None, None, None, False, "JV"),
+    # ---- 栈数据操作：PUSH/POP（保存/恢复现场，序言尾声的雏形）----
+    "PUSH": Signals("RF_SELF", None, None, "PUSH", False, None),
+    "POP":  Signals("POP",     None, None, "RF",   False, None),
     # ---- 子程序：CALL 压返回地址并跳，RET 弹回（硬件栈，6502 JSR/RTS 同构）----
     "CALL": Signals(None, None, None, None, False, "CALL"),
     "RET":  Signals(None, None, None, None, False, "RET"),
