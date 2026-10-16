@@ -46,6 +46,12 @@ def test_isa():
     for r in range(8):
         check(f"PUSH R{r}", isa.decode(*isa.I_PUSH(r)), ("PUSH", r, None))
         check(f"POP R{r}", isa.decode(*isa.I_POP(r)), ("POP", r, None))
+    for r in range(8):
+        check(f"LDX R{r}", isa.decode(*isa.I_LDX(r, 3)), ("LDX", r, 3))
+        check(f"STX R{r}", isa.decode(*isa.I_STX(r, 3)), ("STX", r, 3))
+    for r in range(8):
+        check(f"LDX 指针R{r}", isa.decode(*isa.I_LDX(2, r)), ("LDX", 2, r))
+        check(f"STX 指针R{r}", isa.decode(*isa.I_STX(2, r)), ("STX", 2, r))
     check("HALT", isa.decode(*isa.I_HALT()), ("HALT", None, None))
     check("操作码表与控制表对齐", set(isa.MNEMONICS) == set(control.MICROCODE), True)
     try:
@@ -330,6 +336,96 @@ def test_push_pop():
         check(f"fib({n})", (cpu.rf.read(1), cpu.sp.value, h), (want, 0, True))
 
 
+# ---------- ⑦ 寄存器间接寻址 LDX/STX ----------
+
+def test_indirect():
+    """单次读写、指针步进、双指针拷贝、与自修改版的逐字节差分。"""
+    # 单次读写：R3 当指针
+    prog = (isa.I_LDI(3, 0x80) +
+            isa.I_LDI(0, 0x5A) +
+            isa.I_STX(0, 3) +               # mem[R3] ← R0
+            isa.I_LDI(1, 0) +
+            isa.I_LDX(1, 3) +               # R1 ← mem[R3]
+            isa.I_HALT())
+    cpu, _, h = run_prog(prog)
+    check("间接·写入", cpu.ram.read(0x80), 0x5A)
+    check("间接·读回", (cpu.rf.read(1), h), (0x5A, True))
+
+    # 指针步进填表：0xC0..0xC3 各填 0x77（INC 指针即可，无补丁）
+    prog = (isa.I_LDI(3, 0xC0) +            # 0x00: 指针
+            isa.I_LDI(4, 4) +               # 0x02: 计数
+            isa.I_LDI(0, 0x77) +            # 0x04: 值
+            isa.I_STX(0, 3) +               # 0x06: 循环头
+            isa.I_UN("INC", 3) +            # 0x08: 指针+1——普通数据操作
+            isa.I_UN("DEC", 4) +            # 0x0A
+            isa.I_JMP("JNZ", 0x06) +        # 0x0C
+            isa.I_HALT())                   # 0x0E
+    cpu, _, h = run_prog(prog)
+    check("步进填表", [cpu.ram.read(0xC0 + i) for i in range(4)], [0x77] * 4)
+
+    # 双指针拷贝：16 字节 0x40 → 0x60（自修改时代 9 条/格，现在 6 条/格）
+    prog = (isa.I_LDI(2, 0x40) +            # 0x00: src 指针
+            isa.I_LDI(3, 0x60) +            # 0x02: dst 指针
+            isa.I_LDI(4, 16) +              # 0x04: 计数
+            isa.I_LDX(0, 2) +               # 0x06: R0 ← mem[R2]
+            isa.I_STX(0, 3) +               # 0x08: mem[R3] ← R0
+            isa.I_UN("INC", 2) +            # 0x0A
+            isa.I_UN("INC", 3) +            # 0x0C
+            isa.I_UN("DEC", 4) +            # 0x0E
+            isa.I_JMP("JNZ", 0x06) +        # 0x10
+            isa.I_HALT())                   # 0x12
+    src = [(i * 37 + 11) & 0xFF for i in range(16)]
+    cpu = CPU(prog)
+    for i, v in enumerate(src):             # 烧入源数据
+        cpu.ram.data[0x40 + i] = v
+    n, h = cpu.run()
+    dst = [cpu.ram.read(0x60 + i) for i in range(16)]
+    check("双指针拷贝·内容", dst, src)
+    check("双指针拷贝·条数", (n, h), (3 + 16 * 6, True))   # 3 设置 + 16×6
+
+    # ★ 差分验收：自修改版填表（sixth_munch 原版核心）vs 间接版，64 格逐字节比对
+    old_prog = (                        # —— 自修改版（与 sixth_munch.py 相同，原文件不动）——
+        isa.I_LDI(5, 8) +               # 0x00
+        isa.I_LDI(1, 0) +               # 0x02
+        isa.I_LDI(6, 0xC0) +            # 0x04
+        isa.I_LDI(0, 0) +               # 0x06: y 头
+        isa.I_MOV(3, 0) +               # 0x08: x 头
+        isa.I_ALU("XOR", 3, 1) +        # 0x0A
+        isa.I_ST(3, 0xC0) +             # 0x0C ← 自修改目标
+        isa.I_UN("INC", 6) +            # 0x0E
+        isa.I_ST(6, 0x0D) +             # 0x10 ← 补丁
+        isa.I_UN("INC", 0) +            # 0x12
+        isa.I_ALU("CMP", 0, 5) +        # 0x14
+        isa.I_JMP("JNZ", 0x08) +        # 0x16
+        isa.I_UN("INC", 1) +            # 0x18
+        isa.I_ALU("CMP", 1, 5) +        # 0x1A
+        isa.I_JMP("JNZ", 0x06) +        # 0x1C
+        isa.I_HALT())                   # 0x1E
+    new_prog = (                        # —— 间接版：STX 一条顶 ST+补丁两条 ——
+        isa.I_LDI(5, 8) +               # 0x00
+        isa.I_LDI(1, 0) +               # 0x02
+        isa.I_LDI(6, 0xC0) +            # 0x04
+        isa.I_LDI(0, 0) +               # 0x06: y 头
+        isa.I_MOV(3, 0) +               # 0x08: x 头
+        isa.I_ALU("XOR", 3, 1) +        # 0x0A
+        isa.I_STX(3, 6) +               # 0x0C ★ 间接存储，无补丁
+        isa.I_UN("INC", 6) +            # 0x0E
+        isa.I_UN("INC", 0) +            # 0x10
+        isa.I_ALU("CMP", 0, 5) +        # 0x12
+        isa.I_JMP("JNZ", 0x08) +        # 0x14
+        isa.I_UN("INC", 1) +            # 0x16
+        isa.I_ALU("CMP", 1, 5) +        # 0x18
+        isa.I_JMP("JNZ", 0x06) +        # 0x1A
+        isa.I_HALT())                   # 0x1C
+    cpu_old, n_old, h_old = run_prog(old_prog)
+    cpu_new, n_new, h_new = run_prog(new_prog)
+    fb_old = [cpu_old.ram.read(0xC0 + i) for i in range(64)]
+    fb_new = [cpu_new.ram.read(0xC0 + i) for i in range(64)]
+    check("差分·64 格逐字节一致", fb_new, fb_old)
+    check("差分·两版正常停机", (h_old, h_new), (True, True))
+    check("差分·指令数（旧 547 → 新 483，每格省 1 条）", (n_old, n_new), (547, 483))
+
+
 def main():
     for name, fn in [
         ("ISA 编解码往返", test_isa),
@@ -337,6 +433,7 @@ def main():
         ("条件分支", test_branches),
         ("子程序 CALL/RET", test_subroutines),
         ("PUSH/POP 与 fib 验收", test_push_pop),
+        ("寄存器间接寻址 LDX/STX", test_indirect),
         ("循环累加差分", test_loop_sum),
         ("循环乘法差分", test_loop_mul),
         ("斐波那契差分", test_fibonacci),

@@ -81,6 +81,8 @@ class CPU:
             sp_new = sub8(self.sp.value, 1)[0]
             self.ram.write(sp_new, result)
             self.sp.d(sp_new)
+        elif sig.dest == "MEM_IND":       # 寄存器间接写：读指针寄存器 → 当地址
+            self.ram.write(self.rf.read(other & 7), result)
         # ④ PC 下一拍：停机 / 子程序 / 跳转 / 顺序 +2（经加法器，255 回绕）
         if sig.jump == "HALT":
             self.halted = True
@@ -135,6 +137,8 @@ class CPU:
             value = self.ram.read(self.sp.value)
             self.sp.d(add8(self.sp.value, 1)[0])
             return value
+        if sig.a_from == "REG_IND":       # 寄存器间接读：读指针寄存器 → 当地址
+            return self.ram.read(self.rf.read(other & 7))
         return None
 
     def _pick_b(self, sig, other):

@@ -37,6 +37,7 @@
 - `fourth_multibyte.py` — 第四个示例：16 位多字节加减法，手工传递进位（见「第四个程序」）
 - `fifth_division.py` — 第五个示例：软件除法（移位相减恢复余数法，121 组矩阵差分）（见「第五个程序」）
 - `sixth_munch.py` — 第六个示例：XOR 花纹（Munching Squares，1962 PDP-1 demo 祖师爷）（见「第六个程序」）
+- `sixth_munch_v2.py` — 第六示例的寄存器间接版：同一张表新旧两机制逐字节差分（547→483 条）
 - `知识存档.md` — 从组合逻辑到时序逻辑的设计笔记
 - `后续工作.md` — 路线图与技术债
 
@@ -210,6 +211,7 @@ XOR 恰好铺满 8×8 网格——这台机器和这个图案天生一对。
 
 ```
 LDI/MOV/LD/ST   数据传送（立即数/寄存器/内存）
+LDX/STX         寄存器间接读写（地址 = 指针寄存器内容，Rd←mem[Rn] / mem[Rn]←Rs）
 ADD SUB AND OR XOR MUL CMP   R0~R7 寄存器运算，CMP 只更新标志不写回
 INC DEC SHL SHR 单目运算（INC/DEC 即 B=1 的 ADD/SUB）
 JMP JZ JNZ JC JNC JN JNN JV 条件跳转（消费 Z/N/C/V）
@@ -270,5 +272,7 @@ python -m ASM.asm ASM/example.asm --run    # 翻译 + 上机执行（带跟踪�
 - [x] 迷你汇编器 ASM/：两遍扫描、标号自动解析、`.org`/`.db`、CLI `--run`
 - [x] CALL/RET 与硬件栈：子程序、嵌套调用、递归（236+161 项断言护体）
 - [x] PUSH/POP：栈上保存/恢复现场；定义直译版阶乘与两次递归的 fib 验收（272+180 项断言）
-- [ ] 阶段四余项：ADC/SBB、变长指令、多周期状态机等可选扩展
+- [x] 寄存器间接寻址 LDX/STX：指针成为寄存器里的普通数据，自修改代码正式退役
+  （新旧机制 64 格逐字节差分一致，测试增至 312+214 项）
+- [ ] 阶段四余项：ADC/SBB、变长指令、多周期状态机、输入端口 0xFC 等可选扩展
 

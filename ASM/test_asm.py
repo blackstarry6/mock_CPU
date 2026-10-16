@@ -39,6 +39,12 @@ def test_encode_diff():
     for r in range(8):
         check(f"PUSH R{r}", assemble(f"PUSH R{r}"), isa.I_PUSH(r))
         check(f"POP R{r}", assemble(f"POP R{r}"), isa.I_POP(r))
+    for r in range(8):
+        check(f"LDX R{r}", assemble(f"LDX R{r}, R3"), isa.I_LDX(r, 3))
+        check(f"STX R{r}", assemble(f"STX R{r}, R3"), isa.I_STX(r, 3))
+    for r in range(8):
+        check(f"LDX 指针R{r}", assemble(f"LDX R2, R{r}"), isa.I_LDX(2, r))
+        check(f"STX 指针R{r}", assemble(f"STX R2, R{r}"), isa.I_STX(2, r))
     check("HALT", assemble("HALT"), isa.I_HALT())
     check("十六进制立即数", assemble("LDI R0, #0x5A"), isa.I_LDI(0, 0x5A))
     check("小写与注释", assemble("ldi r2, #7 ; 装载\n"), isa.I_LDI(2, 7))
@@ -197,6 +203,29 @@ def test_end_to_end():
     check("递归 fib(10)=55", cpu.rf.read(1), 55)
     check("递归 fib SP 归零", cpu.sp.value, 0)
     check("递归 fib 停机", halted, True)
+
+    # 寄存器间接寻址：LDX/STX 拷贝字符串，指针步进靠 INC——全程无自修改补丁
+    src = """
+        LDI R2, #0x80     ; 源指针 → msg 数据区
+        LDI R3, #0x90     ; 目的指针
+        LDI R4, #3        ; 计数
+    loop:
+        LDX R0, R2        ; R0 ← mem[R2]（地址来自指针寄存器）
+        STX R0, R3        ; mem[R3] ← R0
+        INC R2            ; 指针步进 = 普通加一，不修任何指令
+        INC R3
+        DEC R4
+        JNZ loop
+        HALT
+    .org 0x80
+    msg:
+        .db "ASM"
+    """
+    cpu = CPU(assemble(src))
+    n, halted = cpu.run()
+    got = [cpu.ram.read(0x90 + i) for i in range(3)]
+    check("间接拷贝·内容", got, [ord(c) for c in "ASM"])
+    check("间接拷贝·停机", halted, True)
 
 
 def main():

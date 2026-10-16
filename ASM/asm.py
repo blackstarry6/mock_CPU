@@ -50,6 +50,8 @@ _SIGS["CALL"] = (("target",), isa.I_CALL)
 _SIGS["RET"] = ((), isa.I_RET)
 _SIGS["PUSH"] = (("reg",), isa.I_PUSH)
 _SIGS["POP"] = (("reg",), isa.I_POP)
+_SIGS["LDX"] = (("reg", "reg"), isa.I_LDX)
+_SIGS["STX"] = (("reg", "reg"), isa.I_STX)
 _SIGS["HALT"] = ((), isa.I_HALT)
 
 _LABEL_RE = re.compile(r"^([A-Za-z_]\w*)\s*:\s*(.*)$")
