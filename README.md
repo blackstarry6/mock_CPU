@@ -5,7 +5,7 @@
 ## 结构
 
 - `ALU/` — 组合算术部件
-  - `gate.py` 基本逻辑门（AND/NAND/OR/NOR/XOR/NOT，感知机实现）
+  - `gate.py` 基本逻辑门（纯 Python 算术，~0.2µs/门；原 numpy 感知机版见 git 历史，26× 提速，197 万项穷举验证数学等价）
   - `full_adder.py` 半加器 → 全加器 → 8 位行波进位加减法器（补码减法）
   - `alu.py` 11 种运算 + Z/N/C/V 标志位
   - `test_alu.py` 穷举测试（197 万项断言）
@@ -81,13 +81,13 @@ CPU 222——底层全绿，上层失败只需查上层。
 
 ```bash
 python -m CPU.cpu           # 整机演示：带指令跟踪的累加循环
-python -m CPU.test_cpu      # CPU 测试（含斐波那契等循环程序差分，约 10 秒）
-python -m ASM.test_asm      # 汇编器测试（152 项断言，瞬时）
+python -m CPU.test_cpu      # CPU 测试（含斐波那契等循环程序差分，约 3 秒）
+python -m ASM.test_asm      # 汇编器测试（214 项断言，瞬时）
 python -m ASM.asm ASM/example.asm        # 汇编：打印机器码 + 反汇编
 python -m ASM.asm ASM/example.asm --run  # 汇编 + 上机执行（带跟踪）
 python -m ASM.asm ASM/sub_demo.asm --run # 递归求和演示（CALL/RET 硬件栈）
 python -m ASM.asm ASM/pushpop_demo.asm --run # 定义直译版阶乘（PUSH/POP 保存现场）
-python -m ALU.test_alu      # ALU 穷举测试（约 5 分钟）
+python -m ALU.test_alu      # ALU 穷举测试（约 12 秒，197 万项断言）
 python -m COMB.test_comb    # 组合部件测试（瞬时）
 python -m SEQ.test_seq      # 时序行为测试（瞬时）
 python -m SEQ.test_register_file
