@@ -6,8 +6,8 @@
 
 - `ALU/` — 组合算术部件
   - `gate.py` 基本逻辑门（纯 Python 算术，~0.2µs/门；原 numpy 感知机版见 git 历史，26× 提速，197 万项穷举验证数学等价）
-  - `full_adder.py` 半加器 → 全加器 → 8 位行波进位加减法器（补码减法）
-  - `alu.py` 11 种运算 + Z/N/C/V 标志位
+  - `full_adder.py` 半加器 → 全加器 → 8 位行波进位加减法器（补码减法，带 cin 端口）
+  - `alu.py` 11 种运算 + Z/N/C/V 标志位（ADC/SBB 复用加减法器，只换进位来源）
   - `test_alu.py` 穷举测试（197 万项断言）
 - `COMB/` — 通用组合部件
   - `mux.py` 门级 2 选 1 / one-hot AND-OR 阵列 / 字级多路选择器
@@ -23,18 +23,21 @@
   - `ram.py` 256 字节同步 RAM（读组合、写打拍、load_program 烧写）
   - `test_ram.py`
 - `CPU/` — 指令集与整机（阶段三）
-  - `isa.py` 统一双字节指令编码、24 种助记符、汇编辅助与反汇编
-  - `control.py` 控制器（"微程序 ROM"查找表 + 跳转条件判断；CMP/INC/DEC 派生）
+  - `isa.py` 统一双字节指令编码、32 种助记符、汇编辅助与反汇编
+  - `control.py` 控制器（"微程序 ROM"查找表 + 跳转条件判断；CMP/INC/DEC 派生；
+    c_from 字段选择加法器进位来源 0/1/C——ADC/SBB 与 ADD/SUB 只差这一格）
   - `cpu.py` 整机接线 + step()/run()（一拍一条指令，统一提交）
-  - `test_cpu.py` 单指令 → 条件分支 → 循环程序差分（222 项断言）
+  - `test_cpu.py` 单指令 → 条件分支 → 循环程序差分（366 项断言）
 - `ASM/` — 迷你汇编器（工具层，只依赖 isa，零机器改动）
   - `asm.py` 两遍扫描：标号自动解析、`.org`/`.db` 伪指令、CLI（`--run` 上机执行）
-  - `test_asm.py` 180 项断言（编码差分/标号/错误/端到端）；`example.asm`、
+  - `test_asm.py` 236 项断言（编码差分/标号/错误/端到端）；`example.asm`、
     `sub_demo.asm`（递归求和）、`pushpop_demo.asm`（PUSH/POP 阶乘）示例
 - `first_program.py` — 入门示例：带指令跟踪的阶乘循环程序（见「第一个程序」）
 - `second_hello.py` — 第二个示例：内存映射 I/O + 自修改代码打印字符串（见「第二个程序」）
 - `third_screen.py` — 第三个示例：帧缓冲"屏幕" + 字符流/回车端口（见「第三个程序」）
 - `fourth_multibyte.py` — 第四个示例：16 位多字节加减法，手工传递进位（见「第四个程序」）
+- `fourth_multibyte_v2.py` — 第四示例的 ADC/SBB 版：16 位 76→25 条、32 位展开链、
+  指针循环翻车现场（INC/DEC 重写 C）三幕（见「第四个程序」v2 小节）
 - `fifth_division.py` — 第五个示例：软件除法（移位相减恢复余数法，121 组矩阵差分）（见「第五个程序」）
 - `sixth_munch.py` — 第六个示例：XOR 花纹（Munching Squares，1962 PDP-1 demo 祖师爷）（见「第六个程序」）
 - `sixth_munch_v2.py` — 第六示例的寄存器间接版：同一张表新旧两机制逐字节差分（547→483 条）
@@ -65,7 +68,7 @@
 一条指令的旅程（`CPU.step()` 五步，声明与提交分离）：
 
 ```
-PC ─地址→ RAM.read×2 ─op,arg→ isa.decode → control.signals（微码六信号）
+PC ─地址→ RAM.read×2 ─op,arg→ isa.decode → control.signals（微码七信号）
                                              │
 RF.read（门级 MUX 译码选择）─A,B→ ALU ─结果+标志┤
       │                             ├→ RF.write / RAM.write（声明）
@@ -75,15 +78,19 @@ RF.read（门级 MUX 译码选择）─A,B→ ALU ─结果+标志┤
                    clk.tick() ← 全机唯一提交点：PC、寄存器、RAM、标志同时翻转
 ```
 
+第七个控制信号 `c_from` 选择加法器进位来源（0 / 1 / C 标志）：ADC/SBB
+不是新电路，是同一加减法器换一个进位来源——C 标志的旧值经反馈线回到
+ALU 进位口，进位得以跨指令接力（本拍算出的新标志要等 tick 才提交）。
+
 测试金字塔：ALU 197 万项穷举打底，向上 COMB 109、SEQ 18+23+9、MEM 11、
-CPU 222——底层全绿，上层失败只需查上层。
+CPU 366——底层全绿，上层失败只需查上层。
 
 ## 运行（包结构：全部在项目根目录、用 -m 运行）
 
 ```bash
 python -m CPU.cpu           # 整机演示：带指令跟踪的累加循环
 python -m CPU.test_cpu      # CPU 测试（含斐波那契等循环程序差分，约 3 秒）
-python -m ASM.test_asm      # 汇编器测试（214 项断言，瞬时）
+python -m ASM.test_asm      # 汇编器测试（236 项断言，瞬时）
 python -m ASM.asm ASM/example.asm        # 汇编：打印机器码 + 反汇编
 python -m ASM.asm ASM/example.asm --run  # 汇编 + 上机执行（带跟踪）
 python -m ASM.asm ASM/sub_demo.asm --run # 递归求和演示（CALL/RET 硬件栈）
@@ -164,8 +171,25 @@ print(cpu.rf.read(1), cpu.ram.read(0x80), cpu.flags())
   先 `ADD` 并趁 C 还在立即分支落进 R2；再补 cin：`R0==255` 时回绕并再置进位，
   否则安全 +1。进位输出 = 两股进位在寄存器里汇合
 - 减法对偶：借位判定用 `JNC`（SUB 的 C 是借位取反），回绕检测 `R0==0` 再减
-- 每字节 ~14 条指令——写完就懂了真实 CPU 为什么都有 `ADC`/`SBB`（1 条顶 14 条），
-  这是本机 ISA 最有资格的扩展候选
+- 每字节 ~14 条指令——写完就懂了真实 CPU 为什么都有 `ADC`/`SBB`（1 条顶 14 条）；
+  这条预言由下方 v2 兑现
+
+### v2（`fourth_multibyte_v2.py`）——ADC/SBB 兑现预言
+
+补上带进位指令后重写同一件事（v1 原样保留），三幕验收全过：
+
+- **第一幕：16 位加减 76 → 25 条**——`ADD` 低字节 / `ADC` 高字节，C 标志在
+  字节间自动接力；进位落盘用 `0+0+C = C`（ALU 兼职"标志搬运工"）；
+  借位（= NOT C）没有单指令技巧——ADC/SBB 都随 C 单调增，凑不出 1−C，
+  只能 JC 分支（x86 正相反：CF 本身就是借位，一步搬出——惯例决定哪头便宜）
+- **第二幕：翻车现场**——指针循环版（LDX/STX + ADC，看似最优雅）必然翻车：
+  循环体里的 INC/DEC 全都重写 C，进位链断在指针步进上（0xFF+1 算出
+  0x01010000：字节 1 丢了真进位，字节 2、3 吃进 DEC 的假进位）。x86 的
+  INC/DEC 保全 CF、6502 的 INX/INY 不碰 C、Z80 的 INC r 不碰 Cy——真 ISA
+  专门给多精度循环留活路；本机的"C 保持"选项记入后续工作
+- **第三幕：32 位展开链 21 条**——每字节 LD/ADC/ST 共 4 条，全链进位
+  （0xFFFFFFFF+1 回绕成 0）等 6 组差分全过；64 位、256 位照葫芦画瓢——
+  这正是大数库的形状（OpenSSL/GMP 的核心循环就是 64 位 ADC 链）
 
 ## 第五个程序：软件除法
 
@@ -315,6 +339,7 @@ gate.py 提速后机器每拍仅 ~14ms，v1.2 的 sleep(0.12) 节奏过快（~7 
 LDI/MOV/LD/ST   数据传送（立即数/寄存器/内存）
 LDX/STX         寄存器间接读写（地址 = 指针寄存器内容，Rd←mem[Rn] / mem[Rn]←Rs）
 ADD SUB AND OR XOR MUL CMP   R0~R7 寄存器运算，CMP 只更新标志不写回
+ADC SBB         带进位加减（进位输入 = C 标志）：多字节运算的进位链
 INC DEC SHL SHR 单目运算（INC/DEC 即 B=1 的 ADD/SUB）
 JMP JZ JNZ JC JNC JN JNN JV 条件跳转（消费 Z/N/C/V）
 CALL/RET 子程序调用与返回（硬件栈：SP 空栈=0，返回地址压栈，栈从 0xFF 向下生长）
@@ -332,7 +357,7 @@ HALT 停机；0xF8 预留 DIV
 
 语法刻意最小化：标号 `name:`（可与指令同行）、注释 `;`、立即数 `#5`/`#0x1F`、
 地址 `[0x80]`（也接受 `[标号]`）、跳转目标直接写标号名；伪指令 `.org`（定位，
-只许前进、中间补零）与 `.db`（数据/ASCII 字符串）。指令与 isa 的 24 条一致，
+只许前进、中间补零）与 `.db`（数据/ASCII 字符串）。指令与 isa 的 32 条一致，
 **助记符大小写不敏感**（`ldi` = `LDI`，解析时统一转大写）；**标号名则大小写敏感**
 （`loop` ≠ `Loop`，符号表按原样存取）。标号名只需是合法标识符（字母/下划线开头）——名字是翻译期的
 脚手架，查表换成地址后即抹除，机器码里只有数字（有蜕变测试守护此性质）。
@@ -341,12 +366,12 @@ HALT 停机；0xF8 预留 DIV
 根除。
 
 ```bash
-python -m ASM.test_asm                     # 152 项断言（瞬时）
+python -m ASM.test_asm                     # 236 项断言（瞬时）
 python -m ASM.asm ASM/example.asm          # 翻译：机器码 + 反汇编对照
 python -m ASM.asm ASM/example.asm --run    # 翻译 + 上机执行（带跟踪）
 ```
 
-测试四层：与 `isa.I_*` 的**编码差分**（24 助记符 × 8 寄存器）、标号与伪指令、
+测试四层：与 `isa.I_*` 的**编码差分**（32 助记符 × 8 寄存器）、标号与伪指令、
 错误用例（含行号专项）、**端到端**（汇编 → 上机 → 与 Python 对账：阶乘 120、
 累加 15）。示例源码见 `ASM/example.asm`。
 
@@ -358,7 +383,8 @@ python -m ASM.asm ASM/example.asm --run    # 翻译 + 上机执行（带跟踪�
   （值本身是断言内容）则必须显式 `LDI` 装值
 - 时序纪律：组合阶段"读旧值 + d()/write() 声明"，时钟沿 tick() 统一提交；
   同拍读到的永远是旧值
-- 标志位 Z/N/C/V（减法 C 为借位取反）；乘法 8x8 → 16 位（存低字节，C=高字节非 0）
+- 标志位 Z/N/C/V（减法 C 为借位取反，6502/ARM 同派）；ADC/SBB 的进位输入
+  = C 标志本身（借位取反惯例下无需取反）；乘法 8x8 → 16 位（存低字节，C=高字节非 0）
 - 硬件栈：SP 空栈 = 0，PUSH 即 SP−1 再写（回绕生长到 0xFF），无溢出保护
 - I/O 端口约定（设备冒充内存，CPU 零知情，示例脚本内定义）：读 0xFC 取键
   （空 = 0 哨兵）；写 0xFE 打字符 / 0xFD 回车；帧缓冲区按程序各自约定
@@ -378,5 +404,8 @@ python -m ASM.asm ASM/example.asm --run    # 翻译 + 上机执行（带跟踪�
 - [x] PUSH/POP：栈上保存/恢复现场；定义直译版阶乘与两次递归的 fib 验收（272+180 项断言）
 - [x] 寄存器间接寻址 LDX/STX：指针成为寄存器里的普通数据，自修改代码正式退役
   （新旧机制 64 格逐字节差分一致，测试增至 312+214 项）
-- [ ] 阶段四余项：ADC/SBB、变长指令、多周期状态机、输入端口 0xFC 等可选扩展
+- [x] ADC/SBB 带进位加减：微码 c_from 字段三选一（0/1/C），C 标志反馈线接入
+  ALU；16 位加减 76→25 条、32 位链 21 条（测试增至 366+236 项）
+- [ ] 阶段四余项：变长指令、多周期状态机、INC/DEC 的"C 保持"选项
+  （多精度循环的活路）、Breakout/猜数字等交互程序
 

@@ -70,7 +70,7 @@ class CPU:
         result, fl = self._pick_a(sig, reg, other), None
         if sig.alu_op is not None:
             b = self._pick_b(sig, other)
-            result, fl = alu(sig.alu_op, result, b)
+            result, fl = alu(sig.alu_op, result, b, self._carry_in(sig))
             if sig.flags:
                 self._stage_flags(fl)
         if sig.dest == "RF":
@@ -147,6 +147,18 @@ class CPU:
         if sig.b_from == "RF_OTHER":
             return self.rf.read(other & 7)
         return 0
+
+    def _carry_in(self, sig):
+        """加法器进位输入的 3 选 1（微码 c_from 字段）。
+
+        ZERO→0 / ONE→1（SUB 补码的 +1）/ FLAG→C 标志：标志寄存器的
+        Q 输出回馈到 ALU 进位口，进位得以跨指令接力。读的是 q 旧值
+        ——本指令的新标志要等 clk.tick() 提交，所以"ADD 低字节 /
+        ADC 高字节"天然取到上一次的进位。
+        """
+        if sig.c_from == "FLAG":
+            return self.flag_c.q
+        return 1 if sig.c_from == "ONE" else 0
 
     def _stage_flags(self, fl):
         self.flag_z.d(fl["Z"])

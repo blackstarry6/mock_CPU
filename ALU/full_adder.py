@@ -54,13 +54,16 @@ def add8(a, b, cin=0):
     return from_bits(sum_bits), co, carries[-2]
 
 
-def sub8(a, b):
-    """8 位减法：a - b = a + ~b + 1 → (差, C, c6)。
+def sub8(a, b, cin=1):
+    """8 位减法：a + ~b + cin = a − b − (1−cin) → (差, C, c6)。
 
-    C 为"借位取反"惯例：C=1 表示够减（无借位），C=0 表示发生了借位。
+    cin=1 即普通减法（SUB 把进位输入焊死在 1）；cin 传 C 标志则是
+    SBB（带借位减）。C 为"借位取反"惯例：C=1 表示够减（无借位），
+    C=0 表示发生了借位——因此 SBB 的 cin 恰好等于 C 本身，无需取反
+    （x86 的 CF=1 表示借位，其 SBB 要取反：两派惯例的差异在此）。
     """
     b_not = [NOT(x) for x in to_bits(b)]
-    sum_bits, carries, co = ripple_add(to_bits(a), b_not, 1)
+    sum_bits, carries, co = ripple_add(to_bits(a), b_not, cin)
     return from_bits(sum_bits), co, carries[-2]
 
 
@@ -81,3 +84,5 @@ if __name__ == "__main__":
     for a, b in [(100, 55), (55, 100), (0, 1)]:
         s, c, _ = sub8(a, b)
         print(f"SUB {a:3d} - {b:3d} = {s:3d}  C={c} (1=无借位)")
+    s, c, _ = sub8(0, 0, 0)        # SBB：高字节 0 − 0 − 借位 = 0xFF
+    print(f"SBB   0 -  0 - 借位 = {s:3d}  C={c} (再借位)")

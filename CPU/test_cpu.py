@@ -50,6 +50,9 @@ def test_isa():
         check(f"LDX R{r}", isa.decode(*isa.I_LDX(r, 3)), ("LDX", r, 3))
         check(f"STX R{r}", isa.decode(*isa.I_STX(r, 3)), ("STX", r, 3))
     for r in range(8):
+        check(f"ADC R{r}", isa.decode(*isa.I_ADC(r, 7)), ("ADC", r, 7))
+        check(f"SBB R{r}", isa.decode(*isa.I_SBB(r, 7)), ("SBB", r, 7))
+    for r in range(8):
         check(f"LDX 指针R{r}", isa.decode(*isa.I_LDX(2, r)), ("LDX", 2, r))
         check(f"STX 指针R{r}", isa.decode(*isa.I_STX(2, r)), ("STX", 2, r))
     check("HALT", isa.decode(*isa.I_HALT()), ("HALT", None, None))
@@ -426,6 +429,111 @@ def test_indirect():
     check("差分·指令数（旧 547 → 新 483，每格省 1 条）", (n_old, n_new), (547, 483))
 
 
+# ---------- ⑧ 带进位加减 ADC/SBB：进位跨指令接力 ----------
+
+def test_carry():
+    """微码进位来源、单字节进/借位、SUB 接线回归、标志粘性、16 位差分。"""
+    # 微码层：带进位指令与普通加减只差 c_from 一个字段——表格即文档
+    add, adc = control.MICROCODE["ADD"], control.MICROCODE["ADC"]
+    sub, sbb = control.MICROCODE["SUB"], control.MICROCODE["SBB"]
+    check("微码·ADD 与 ADC 只差 c_from", add[:6] == adc[:6], True)
+    check("微码·ADC 的进位接 C 标志", adc.c_from, "FLAG")
+    check("微码·SUB 与 SBB 只差 c_from", sub[:6] == sbb[:6], True)
+    check("微码·SBB 的进位接 C 标志", sbb.c_from, "FLAG")
+    check("微码·SUB 的 cin 接 1（补码 +1）", sub.c_from, "ONE")
+    check("微码·CMP/INC/DEC 的 cin", (control.MICROCODE["CMP"].c_from,
+          control.MICROCODE["INC"].c_from, control.MICROCODE["DEC"].c_from),
+          ("ONE", "ZERO", "ONE"))
+
+    # ADC 吃进上一条 ADD 的进位：255+1 → C=1，高字节 0+0+C=1
+    prog = (isa.I_LDI(0, 255) + isa.I_LDI(1, 1) + isa.I_ALU("ADD", 0, 1)
+            + isa.I_LDI(4, 0) + isa.I_LDI(3, 0) + isa.I_ADC(4, 3) + isa.I_HALT())
+    cpu, _, h = run_prog(prog)
+    check("ADC·吃进位", (cpu.rf.read(0), cpu.rf.read(4), h), (0, 1, True))
+    check("ADC·0+0+1 无新进位", cpu.flags()["C"], 0)
+
+    # ADC 在无进位时不多加：1+2 → C=0，10+20+C=30
+    prog = (isa.I_LDI(0, 1) + isa.I_LDI(1, 2) + isa.I_ALU("ADD", 0, 1)
+            + isa.I_LDI(4, 10) + isa.I_LDI(3, 20) + isa.I_ADC(4, 3) + isa.I_HALT())
+    cpu, _, _ = run_prog(prog)
+    check("ADC·无进位不多加", cpu.rf.read(4), 30)
+
+    # SBB 借位链：0−1 → 255 C=0，高字节 0−0−借位 = 255（16 位 0−1 = 0xFFFF）
+    prog = (isa.I_LDI(0, 0) + isa.I_LDI(1, 1) + isa.I_ALU("SUB", 0, 1)
+            + isa.I_LDI(4, 0) + isa.I_LDI(3, 0) + isa.I_SBB(4, 3) + isa.I_HALT())
+    cpu, _, _ = run_prog(prog)
+    check("SBB·借位链 16 位 0−1", (cpu.rf.read(0), cpu.rf.read(4)), (255, 255))
+    check("SBB·再借位 C=0", cpu.flags()["C"], 0)
+
+    # SBB 在无借位时就是普通减法：5−3 → C=1，10−4−0=6
+    prog = (isa.I_LDI(0, 5) + isa.I_LDI(1, 3) + isa.I_ALU("SUB", 0, 1)
+            + isa.I_LDI(4, 10) + isa.I_LDI(3, 4) + isa.I_SBB(4, 3) + isa.I_HALT())
+    cpu, _, _ = run_prog(prog)
+    check("SBB·无借位即普通减", cpu.rf.read(4), 6)
+
+    # SUB 接线回归：cin 必须恰好接 1（否则悄悄变成 a−b−1）
+    for a, b in [(5, 3), (100, 55), (0, 1), (200, 100)]:
+        prog = (isa.I_LDI(0, a) + isa.I_LDI(1, b) + isa.I_ALU("SUB", 0, 1) + isa.I_HALT())
+        cpu, _, _ = run_prog(prog)
+        check(f"SUB 回归 {a}−{b}", (cpu.rf.read(0), cpu.flags()["C"]),
+              ((a - b) & 0xFF, int(a >= b)))
+    cpu, _, _ = run_prog(isa.I_LDI(0, 3) + isa.I_LDI(1, 5)
+                         + isa.I_ALU("CMP", 0, 1) + isa.I_HALT())
+    check("CMP 回归·借位 C=0", cpu.flags()["C"], 0)
+    cpu, _, _ = run_prog(isa.I_LDI(0, 0) + isa.I_UN("DEC", 0) + isa.I_HALT())
+    check("DEC 回归·0−1=255 且 C=0", (cpu.rf.read(0), cpu.flags()["C"]), (255, 0))
+    cpu, _, _ = run_prog(isa.I_LDI(0, 255) + isa.I_UN("INC", 0) + isa.I_HALT())
+    check("INC 回归·255+1=0 且 C=1", (cpu.rf.read(0), cpu.flags()["C"]), (0, 1))
+
+    # 标志粘性：C 跨过不动标志的指令存活，ADC 取到的仍是旧值
+    prog = (isa.I_LDI(0, 255) + isa.I_LDI(1, 1) + isa.I_ALU("ADD", 0, 1)   # C=1
+            + isa.I_LDI(2, 5) + isa.I_LD(3, 0x00) + isa.I_LDI(4, 6)       # 全都不动标志
+            + isa.I_ADC(2, 4) + isa.I_HALT())                             # 5+6+旧 C=12
+    cpu, _, _ = run_prog(prog)
+    check("标志粘性·ADC 取旧 C", cpu.rf.read(2), 12)
+
+    # ADC 的有符号溢出：127 + 0 + C=1 = 128 → V=1（V=c6⊕C 对带进位加法同样成立）
+    prog = (isa.I_LDI(0, 255) + isa.I_LDI(1, 1) + isa.I_ALU("ADD", 0, 1)   # C=1
+            + isa.I_LDI(0, 127) + isa.I_LDI(1, 0) + isa.I_ADC(0, 1) + isa.I_HALT())
+    cpu, _, _ = run_prog(prog)
+    check("ADC 溢出 127+0+C", (cpu.rf.read(0), cpu.flags()["V"], cpu.flags()["N"]),
+          (128, 1, 1))
+
+    # 进位跨两条 ADC 接力：24 位 0x0000FF + 0x000001 = 0x010000
+    prog = (isa.I_LDI(0, 0xFF) + isa.I_LDI(1, 0x01)
+            + isa.I_ALU("ADD", 0, 1)                                      # 字节 0：00，C=1
+            + isa.I_LDI(1, 0) + isa.I_LDI(2, 0) + isa.I_ADC(2, 1)         # 字节 1：01，C=0
+            + isa.I_LDI(3, 0) + isa.I_ADC(3, 1)                           # 字节 2：00
+            + isa.I_HALT())
+    cpu, _, _ = run_prog(prog)
+    check("24 位进位接力 0xFF+1", (cpu.rf.read(0), cpu.rf.read(2), cpu.rf.read(3)),
+          (0, 1, 0))
+
+    # ★ 16 位差分矩阵：ADD/ADC、SUB/SBB 与 Python 逐例比对
+    #   布局与 fourth_multibyte(v1/v2) 相同：低字节在前，结果看 (低, 高, 进位/借位)
+    CASES = [(0x01FF, 0x0002), (0x00FF, 0x0001), (0xFFFF, 0x0001), (0x0000, 0x0001),
+             (0x1234, 0xCDEF), (60000, 10000), (0x8000, 0x7FFF), (0x0000, 0x0000)]
+    for a, b in CASES:
+        prog = (isa.I_LDI(0, a & 0xFF) + isa.I_LDI(1, b & 0xFF)
+                + isa.I_ALU("ADD", 0, 1)                                  # 低字节，C=c0
+                + isa.I_LDI(2, a >> 8) + isa.I_LDI(3, b >> 8)
+                + isa.I_ADC(2, 3) + isa.I_HALT())                         # 高字节 +c0
+        cpu, _, h = run_prog(prog)
+        s = a + b
+        check(f"16 位加 {a:#06x}+{b:#06x}",
+              (cpu.rf.read(0), cpu.rf.read(2), cpu.flags()["C"], h),
+              (s & 0xFF, (s >> 8) & 0xFF, int(s > 0xFFFF), True))
+        prog = (isa.I_LDI(0, a & 0xFF) + isa.I_LDI(1, b & 0xFF)
+                + isa.I_ALU("SUB", 0, 1)                                  # 低字节，C=0 即借位
+                + isa.I_LDI(2, a >> 8) + isa.I_LDI(3, b >> 8)
+                + isa.I_SBB(2, 3) + isa.I_HALT())                         # 高字节 −借位
+        cpu, _, h = run_prog(prog)
+        d = a - b
+        check(f"16 位减 {a:#06x}−{b:#06x}",
+              (cpu.rf.read(0), cpu.rf.read(2), 1 - cpu.flags()["C"], h),
+              (d & 0xFF, (d >> 8) & 0xFF, int(a < b), True))
+
+
 def main():
     for name, fn in [
         ("ISA 编解码往返", test_isa),
@@ -434,6 +542,7 @@ def main():
         ("子程序 CALL/RET", test_subroutines),
         ("PUSH/POP 与 fib 验收", test_push_pop),
         ("寄存器间接寻址 LDX/STX", test_indirect),
+        ("带进位加减 ADC/SBB", test_carry),
         ("循环累加差分", test_loop_sum),
         ("循环乘法差分", test_loop_mul),
         ("斐波那契差分", test_fibonacci),

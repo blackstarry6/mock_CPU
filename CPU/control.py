@@ -16,10 +16,15 @@
   flags   是否更新标志位
   jump    PC 下一拍：None=顺序 +2 / 条件名 / "CALL"=压返回地址并跳 /
           "RET"=弹返回地址 / "HALT"=停机
+  c_from  加法器进位输入的 3 选 1：ZERO=接地（ADD）/ ONE=接电源（SUB
+          补码的 +1）/ FLAG=接 C 标志（ADC/SBB 的反馈线）/ None=不关心
 """
 from collections import namedtuple
 
-Signals = namedtuple("Signals", "a_from alu_op b_from dest flags jump")
+# c_from 带默认值 None：既有微码行无需逐行补写（namedtuple 的默认值
+# 只作用于最右侧字段），真正用进位输入的行显式给出
+Signals = namedtuple("Signals", "a_from alu_op b_from dest flags jump c_from",
+                     defaults=(None,))
 
 MICROCODE = {
     # ---- 数据传送：直通，不动标志 ----
@@ -28,16 +33,20 @@ MICROCODE = {
     "LD":  Signals("MEM",       None, None,      "RF",  False, None),
     "ST":  Signals("RF_SELF",   None, None,      "MEM", False, None),
     # ---- 算术逻辑：经 ALU，更新标志 ----
-    "ADD": Signals("RF_SELF", "ADD", "RF_OTHER", "RF", True, None),
-    "SUB": Signals("RF_SELF", "SUB", "RF_OTHER", "RF", True, None),
+    # ADC 与 ADD 唯一差别是 c_from（SBB 与 SUB 同理）：带进位指令不是
+    # 新电路，是同一加减法器换一个进位来源（0 / 1 / C 标志）
+    "ADD": Signals("RF_SELF", "ADD", "RF_OTHER", "RF", True, None, "ZERO"),
+    "ADC": Signals("RF_SELF", "ADD", "RF_OTHER", "RF", True, None, "FLAG"),
+    "SUB": Signals("RF_SELF", "SUB", "RF_OTHER", "RF", True, None, "ONE"),
+    "SBB": Signals("RF_SELF", "SUB", "RF_OTHER", "RF", True, None, "FLAG"),
     "AND": Signals("RF_SELF", "AND", "RF_OTHER", "RF", True, None),
     "OR":  Signals("RF_SELF", "OR",  "RF_OTHER", "RF", True, None),
     "XOR": Signals("RF_SELF", "XOR", "RF_OTHER", "RF", True, None),
     "MUL": Signals("RF_SELF", "MUL", "RF_OTHER", "RF", True, None),
-    "CMP": Signals("RF_SELF", "SUB", "RF_OTHER", None, True, None),  # 减法不写回
+    "CMP": Signals("RF_SELF", "SUB", "RF_OTHER", None, True, None, "ONE"),  # 减法不写回
     # ---- 单目：派生指令（复用 ALU；INC/DEC 把常数 1 接到 B 端）----
-    "INC": Signals("RF_SELF", "ADD", "ONE", "RF", True, None),
-    "DEC": Signals("RF_SELF", "SUB", "ONE", "RF", True, None),
+    "INC": Signals("RF_SELF", "ADD", "ONE", "RF", True, None, "ZERO"),
+    "DEC": Signals("RF_SELF", "SUB", "ONE", "RF", True, None, "ONE"),
     "SHL": Signals("RF_SELF", "SHL", None, "RF", True, None),
     "SHR": Signals("RF_SELF", "SHR", None, "RF", True, None),
     # ---- 跳转：无运算无写回，读当前标志定去留 ----

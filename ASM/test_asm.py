@@ -32,6 +32,11 @@ def test_encode_diff():
             check(f"{name} R{r}", assemble(f"{name} R{r}, R7"), isa.I_ALU(name, r, 7))
         for name in isa.UN_OPS:
             check(f"{name} R{r}", assemble(f"{name} R{r}"), isa.I_UN(name, r))
+    for r in range(8):
+        check(f"ADC R{r}", assemble(f"ADC R{r}, R7"), isa.I_ADC(r, 7))
+        check(f"SBB R{r}", assemble(f"SBB R{r}, R7"), isa.I_SBB(r, 7))
+    check("ADC 编码段 0xA0", assemble("ADC R0, R1"), [0xA0, 1])
+    check("SBB 编码段 0xA8", assemble("SBB R0, R1"), [0xA8, 1])
     for name in isa.JUMPS:
         check(f"{name}", assemble(f"{name} 0x42"), isa.I_JMP(name, 0x42))
     check("CALL", assemble("CALL 0x42"), isa.I_CALL(0x42))
@@ -104,6 +109,7 @@ def test_errors():
     check("寄存器越界", raises("LDI R8, #1", "非法寄存器"), True)
     check("未知助记符", raises("FOO R0", "未知助记符"), True)
     check("操作数数量", raises("ADD R0", "操作数"), True)
+    check("ADC 操作数数量", raises("ADC R0, R1, R2", "操作数"), True)
     check("立即数缺 #", raises("LDI R0, 5", "# 前缀"), True)
     check("地址缺括号", raises("LD R0, 0x80", "方括号"), True)
     check(".org 后退", raises("HALT\n.org 0", "只许前进"), True)
@@ -226,6 +232,22 @@ def test_end_to_end():
     got = [cpu.ram.read(0x90 + i) for i in range(3)]
     check("间接拷贝·内容", got, [ord(c) for c in "ASM"])
     check("间接拷贝·停机", halted, True)
+
+    # 带进位链的 16 位加法（ADC 的招牌场景）：0x00FF + 0x0001 = 0x0100
+    src = """
+        LDI R0, #0xFF     ; 低字节
+        LDI R1, #0x01
+        ADD R0, R1        ; → 0x00，C=1
+        LDI R2, #0x00     ; 高字节
+        LDI R3, #0x00
+        ADC R2, R3        ; → 0x01，吃掉进位
+        HALT
+    """
+    cpu = CPU(assemble(src))
+    n, halted = cpu.run()
+    check("16 位加·低字节回绕", cpu.rf.read(0), 0x00)
+    check("16 位加·高字节吃进位", cpu.rf.read(2), 0x01)
+    check("16 位加·停机", halted, True)
 
 
 def main():

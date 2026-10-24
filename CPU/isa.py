@@ -14,6 +14,8 @@
     0x88-0x8F  POP Ri                   弹栈（读出后 SP+1）
     0x90-0x97  LDX Rd, [Rn]         读间接：Rd ← mem[Rn 的内容]
     0x98-0x9F  STX Rs, [Rn]         写间接：mem[Rn 的内容] ← Rs
+    0xA0-0xA7  ADC Rd, Rs           带进位加：Rd ← Rd+Rs+C（多字节加法链）
+    0xA8-0xAF  SBB Rd, Rs           带借位减：Rd ← Rd−Rs−借位（cin=C）
     0xE0       CALL [target]       调用子程序（返回地址压栈）
     0xE1       RET                 返回（弹出返回地址装回 PC）
     0xF0       HALT
@@ -31,11 +33,14 @@ _ALU_BASE, _UN_BASE, _JMP_BASE = 0x20, 0x58, 0x78
 
 _PUSH_BASE, _POP_BASE = 0x80, 0x88
 _LDX_BASE, _STX_BASE = 0x90, 0x98
+_ADC_BASE, _SBB_BASE = 0xA0, 0xA8     # 填操作码空洞：不动既有编码
 
 ALU_OPS = ("ADD", "SUB", "AND", "OR", "XOR", "MUL", "CMP")
+CARRY_OPS = ("ADC", "SBB")    # 带进位加减：独立编码段，数据通路复用 ADD/SUB
 UN_OPS = ("INC", "DEC", "SHL", "SHR")
 JUMPS = ("JMP", "JZ", "JNZ", "JC", "JNC", "JN", "JNN", "JV")
-MNEMONICS = ("LDI", "MOV", "LD", "ST", "LDX", "STX") + ALU_OPS + UN_OPS + JUMPS + ("PUSH", "POP", "CALL", "RET", "HALT")
+MNEMONICS = (("LDI", "MOV", "LD", "ST", "LDX", "STX") + ALU_OPS + CARRY_OPS
+             + UN_OPS + JUMPS + ("PUSH", "POP", "CALL", "RET", "HALT"))
 
 
 # ---------- 汇编辅助：助记符 → 机器码（每条两字节） ----------
@@ -80,6 +85,14 @@ def I_LDX(rd, rn):
 def I_STX(rs, rn):
     return [_STX_BASE | (rs & 7), rn & 7]
 
+
+def I_ADC(rd, rs):
+    return [_ADC_BASE | (rd & 7), rs & 7]
+
+
+def I_SBB(rd, rs):
+    return [_SBB_BASE | (rd & 7), rs & 7]
+
 def I_HALT():
     return [OP_HALT, 0]
 
@@ -109,6 +122,10 @@ def decode(op, arg):
         return "LDX", op & 7, arg & 7
     if _STX_BASE <= op <= _STX_BASE + 7:
         return "STX", op & 7, arg & 7
+    if _ADC_BASE <= op <= _ADC_BASE + 7:
+        return "ADC", op & 7, arg & 7
+    if _SBB_BASE <= op <= _SBB_BASE + 7:
+        return "SBB", op & 7, arg & 7
     if _ALU_BASE <= op <= _ALU_BASE + len(ALU_OPS) * 8 - 1:
         return ALU_OPS[(op - _ALU_BASE) >> 3], op & 7, arg & 7
     if _UN_BASE <= op <= _UN_BASE + len(UN_OPS) * 8 - 1:
@@ -135,7 +152,7 @@ def disasm(op, arg):
         return f"LD  R{reg}, [{other:#04x}]"
     if name == "ST":
         return f"ST  R{reg}, [{other:#04x}]"
-    if name in ALU_OPS:
+    if name in ALU_OPS or name in CARRY_OPS:
         return f"{name} R{reg}, R{other}"
     if name in UN_OPS:
         return f"{name} R{reg}"
