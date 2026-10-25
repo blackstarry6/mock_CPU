@@ -3,8 +3,10 @@
 期望值全部由 Python 原生计算生成，延续项目的差分测试风格。
 运行（项目根目录）：python -m CPU.test_cpu
 """
+import ast
 import math
 import sys
+from pathlib import Path
 
 from . import isa, control
 from .cpu import CPU
@@ -25,6 +27,35 @@ def run_prog(prog, max_instr=10000):
     cpu = CPU(prog)
     n, halted = cpu.run(max_instr)
     return cpu, n, halted
+
+
+# ---------- 架构护栏：跨包 import 边冻结 ----------
+
+PACKAGES = ("ALU", "COMB", "SEQ", "MEM", "CPU", "ASM")
+EXPECTED_EDGES = {"COMB→ALU", "SEQ→ALU", "SEQ→COMB",
+                  "CPU→ALU", "CPU→SEQ", "CPU→MEM", "ASM→CPU"}
+
+
+def _cross_package_edges():
+    """扫描六个包的实际 import，收集跨包依赖边（集合）。
+
+    护栏的由来：README 曾写"跨包 import 仅 6 条"，ASM 加入带来第 7 条
+    （ASM→CPU）后没人更新——自称精确的定量断言被岁月悄悄证伪。与其
+    口头承诺"耦合面收窄"，不如让测试盯住：新增一条边必须同时改这里
+    和 README，耦合的扩张从"悄悄发生"变成"显式决定"。
+    只认 from X[.Y] import 形式（项目无裸 import 包）；相对导入（from .）
+    是包内依赖；根目录示例脚本是驱动层、不在分层体系内，均不计。
+    """
+    root = Path(__file__).resolve().parent.parent
+    edges = set()
+    for pkg in PACKAGES:
+        for py in (root / pkg).glob("*.py"):
+            for node in ast.walk(ast.parse(py.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.ImportFrom) and node.module:
+                    head = node.module.split(".")[0]
+                    if head in PACKAGES and head != pkg:
+                        edges.add(f"{pkg}→{head}")
+    return edges
 
 
 # ---------- ① ISA：全量编解码往返 ----------
@@ -57,6 +88,7 @@ def test_isa():
         check(f"STX 指针R{r}", isa.decode(*isa.I_STX(2, r)), ("STX", 2, r))
     check("HALT", isa.decode(*isa.I_HALT()), ("HALT", None, None))
     check("操作码表与控制表对齐", set(isa.MNEMONICS) == set(control.MICROCODE), True)
+    check("跨包 import 边冻结（恰 7 条）", _cross_package_edges(), EXPECTED_EDGES)
     try:
         isa.decode(0xFE, 0)
         ok = False
