@@ -513,9 +513,9 @@ def test_carry():
                          + isa.I_ALU("CMP", 0, 1) + isa.I_HALT())
     check("CMP 回归·借位 C=0", cpu.flags()["C"], 0)
     cpu, _, _ = run_prog(isa.I_LDI(0, 0) + isa.I_UN("DEC", 0) + isa.I_HALT())
-    check("DEC 回归·0−1=255 且 C=0", (cpu.rf.read(0), cpu.flags()["C"]), (255, 0))
+    check("DEC 回归·0−1=255", cpu.rf.read(0), 255)   # C 的行为已改"保持"，见下组
     cpu, _, _ = run_prog(isa.I_LDI(0, 255) + isa.I_UN("INC", 0) + isa.I_HALT())
-    check("INC 回归·255+1=0 且 C=1", (cpu.rf.read(0), cpu.flags()["C"]), (0, 1))
+    check("INC 回归·255+1=0", cpu.rf.read(0), 0)
 
     # 标志粘性：C 跨过不动标志的指令存活，ADC 取到的仍是旧值
     prog = (isa.I_LDI(0, 255) + isa.I_LDI(1, 1) + isa.I_ALU("ADD", 0, 1)   # C=1
@@ -566,6 +566,59 @@ def test_carry():
               (d & 0xFF, (d >> 8) & 0xFF, int(a < b), True))
 
 
+# ---------- ⑨ INC/DEC 保持 C/V：进位链中间可安全步进指针 ----------
+
+def test_inc_dec_carry():
+    """INC/DEC 只写 Z/N，C/V 保持（对齐 x86 INC 保全 CF / 6502 INX 不碰 C）。
+
+    动机：指针步进（INC）与循环计数（DEC）是循环的必需品，而它们曾把
+    C 顺手踩掉——多精度加法的指针循环因此写不出来（fourth_multibyte_v2
+    第二幕：0xFF+1 曾算出 0x01010000）。本组锁定修复后的语义。
+    """
+    # 微码层：INC/DEC 的 flags 字段为 "ZN"
+    check("微码·INC 只写 Z/N", control.MICROCODE["INC"].flags, "ZN")
+    check("微码·DEC 只写 Z/N", control.MICROCODE["DEC"].flags, "ZN")
+
+    # C 保持（双向）：预设 C=1 → INC 后仍 1；预设 C=0 → DEC 后仍 0
+    prog = (isa.I_LDI(0, 255) + isa.I_LDI(1, 1) + isa.I_ALU("ADD", 0, 1)  # C=1
+            + isa.I_LDI(2, 5) + isa.I_UN("INC", 2) + isa.I_HALT())        # 5→6
+    cpu, _, _ = run_prog(prog)
+    check("INC·C 保持=1", (cpu.rf.read(2), cpu.flags()["C"]), (6, 1))
+    prog = (isa.I_LDI(0, 0) + isa.I_LDI(1, 1) + isa.I_ALU("SUB", 0, 1)    # C=0
+            + isa.I_LDI(2, 5) + isa.I_UN("DEC", 2) + isa.I_HALT())        # 5→4
+    cpu, _, _ = run_prog(prog)
+    check("DEC·C 保持=0", (cpu.rf.read(2), cpu.flags()["C"]), (4, 0))
+
+    # V 保持：预设 V=1（127+1 有符号溢出）→ INC 别的寄存器后 V 仍 1
+    prog = (isa.I_LDI(0, 127) + isa.I_LDI(1, 1) + isa.I_ALU("ADD", 0, 1)  # V=1
+            + isa.I_LDI(2, 5) + isa.I_UN("INC", 2) + isa.I_HALT())
+    cpu, _, _ = run_prog(prog)
+    check("INC·V 保持=1", cpu.flags()["V"], 1)
+
+    # Z/N 照写：INC 1→2 时 Z=0；DEC 1→0 时 Z=1（循环语义不丢）
+    prog = (isa.I_LDI(0, 1) + isa.I_UN("INC", 0) + isa.I_LDI(1, 1)
+            + isa.I_UN("DEC", 1) + isa.I_HALT())
+    cpu, _, _ = run_prog(prog)
+    check("INC/DEC·Z 照写", (cpu.rf.read(0), cpu.rf.read(1), cpu.flags()["Z"]),
+          (2, 0, 1))
+    cpu, _, _ = run_prog(isa.I_LDI(0, 0x7F) + isa.I_UN("INC", 0) + isa.I_HALT())
+    check("INC·N 照写", (cpu.rf.read(0), cpu.flags()["N"]), (0x80, 1))
+
+    # ★ 新能力最小复现：进位链中间插 INC（修复前这条必挂）
+    #   即 fourth_multibyte_v2 第二幕的最小化：ADD 产 C=1 → 指针步进 → ADC 接力
+    prog = (isa.I_LDI(0, 255) + isa.I_LDI(1, 1) + isa.I_ALU("ADD", 0, 1)  # C=1
+            + isa.I_LDI(5, 0xC0) + isa.I_UN("INC", 5)                     # 指针步进
+            + isa.I_LDI(2, 0) + isa.I_LDI(3, 0) + isa.I_ADC(2, 3)         # 0+0+C=1
+            + isa.I_HALT())
+    cpu, _, _ = run_prog(prog)
+    check("★进位链中间插 INC·ADC 仍吃到 C=1", (cpu.rf.read(2), cpu.rf.read(5)),
+          (1, 0xC1))
+
+    # 回绕检测能力未丢：INC 255→0 时 Z=1 接得住（旧靠 C，新靠 Z）
+    cpu, _, _ = run_prog(isa.I_LDI(0, 255) + isa.I_UN("INC", 0) + isa.I_HALT())
+    check("INC 回绕·Z=1 仍可检测", (cpu.rf.read(0), cpu.flags()["Z"]), (0, 1))
+
+
 def main():
     for name, fn in [
         ("ISA 编解码往返", test_isa),
@@ -575,6 +628,7 @@ def main():
         ("PUSH/POP 与 fib 验收", test_push_pop),
         ("寄存器间接寻址 LDX/STX", test_indirect),
         ("带进位加减 ADC/SBB", test_carry),
+        ("INC/DEC 保持 C/V", test_inc_dec_carry),
         ("循环累加差分", test_loop_sum),
         ("循环乘法差分", test_loop_mul),
         ("斐波那契差分", test_fibonacci),

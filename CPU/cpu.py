@@ -72,7 +72,7 @@ class CPU:
             b = self._pick_b(sig, other)
             result, fl = alu(sig.alu_op, result, b, self._carry_in(sig))
             if sig.flags:
-                self._stage_flags(fl)
+                self._stage_flags(fl, sig.flags)
         if sig.dest == "RF":
             self.rf.write(reg, result)
         elif sig.dest == "MEM":
@@ -160,11 +160,18 @@ class CPU:
             return self.flag_c.q
         return 1 if sig.c_from == "ONE" else 0
 
-    def _stage_flags(self, fl):
+    def _stage_flags(self, fl, which=True):
+        """登记标志：True=四位置新；"ZN"=只写 Z/N（INC/DEC 的"C 保持"）。
+
+        不调 d() 就是不声明，tick() 时该 DFF 原样保持——与真机"控制器
+        不置位标志位的写使能"同构。C 保持后，进位链中间可以安全地
+        步进指针/计数（x86 的 INC 保全 CF、6502 的 INX 不碰 C 同款）。
+        """
         self.flag_z.d(fl["Z"])
         self.flag_n.d(fl["N"])
-        self.flag_c.d(fl["C"])
-        self.flag_v.d(fl["V"])
+        if which != "ZN":
+            self.flag_c.d(fl["C"])
+            self.flag_v.d(fl["V"])
 
 
 if __name__ == "__main__":

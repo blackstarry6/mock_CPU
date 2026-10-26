@@ -13,7 +13,9 @@
   b_from  B 操作数来源：ONE=常数 1 / RF_OTHER=寄存器 / None=不用
   dest    结果去向：RF=写回寄存器 / MEM=写内存 / PUSH=压栈（写即压栈）/
           MEM_IND=写内存[指针寄存器]（寄存器间接写）/ None=丢弃（如 CMP）
-  flags   是否更新标志位
+  flags   更新哪些标志位：True=四位置新 / False=不动 / "ZN"=只写 Z·N
+          （INC/DEC 的"C 保持"——进位链中间可安全步进指针，
+          对齐 x86 INC 保全 CF / 6502 INX 不碰 C 的设计）
   jump    PC 下一拍：None=顺序 +2 / 条件名 / "CALL"=压返回地址并跳 /
           "RET"=弹返回地址 / "HALT"=停机
   c_from  加法器进位输入的 3 选 1：ZERO=接地（ADD）/ ONE=接电源（SUB
@@ -45,8 +47,9 @@ MICROCODE = {
     "MUL": Signals("RF_SELF", "MUL", "RF_OTHER", "RF", True, None),
     "CMP": Signals("RF_SELF", "SUB", "RF_OTHER", None, True, None, "ONE"),  # 减法不写回
     # ---- 单目：派生指令（复用 ALU；INC/DEC 把常数 1 接到 B 端）----
-    "INC": Signals("RF_SELF", "ADD", "ONE", "RF", True, None, "ZERO"),
-    "DEC": Signals("RF_SELF", "SUB", "ONE", "RF", True, None, "ONE"),
+    # INC/DEC 只写 Z/N——C/V 保持是多精度循环的活路（指针步进不踩进位链）
+    "INC": Signals("RF_SELF", "ADD", "ONE", "RF", "ZN", None, "ZERO"),
+    "DEC": Signals("RF_SELF", "SUB", "ONE", "RF", "ZN", None, "ONE"),
     "SHL": Signals("RF_SELF", "SHL", None, "RF", True, None),
     "SHR": Signals("RF_SELF", "SHR", None, "RF", True, None),
     # ---- 跳转：无运算无写回，读当前标志定去留 ----
