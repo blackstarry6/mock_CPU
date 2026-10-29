@@ -21,24 +21,25 @@
   R5/R6/R7  全局常数 0/10/48（驱动开头设置，全员只读）
   例外      div10 是内部子程序：R2 出余数，仅被 print_dec 调用
 
-内存布局：程序 ≤0x93；控制台端口 0x9E；数组 0xA0~（N 字节）；
-          栈从 0xFF 向下（峰值 ~7 层，最深 0xF9——三方互不侵犯）。
+内存布局：程序 ≤0x93；控制台端口 0xFE（惯例位）；数组 0xA0~（N 字节）；
+          栈空 SP=0xFC、从 0xFB 向下生长（峰值 ~7 层）——与 I/O 阁楼互不侵犯。
 
-★ 本程序的端口为什么不是惯例的 0xFE——一个真实的内存映射设计问题：
-  栈从 0xFF 向下生长，第二格恰好是 0xFE。本程序是第一个"子程序栈 ×
-  控制台端口"合体用户，撞了个正着：PUSH 存现场的动作被端口钩子当成
-  打字捕获（多出 \x00）；ST 打数字又覆盖栈里保存的 R2，尾声"还原"出
-  一个 ASCII 数字泄漏进下一轮输出。真实硬件靠内存映射分家解决（6502
-  专辟第 1 页做栈，正是为了与 I/O 区隔离）；本程序把端口搬到 0x9E
-  ——避开栈生长区。机器级的正规化（端口区/栈区重划）记入后续工作。
+★ 花絮：本程序是第一个"子程序栈 × 控制台端口"合体用户，第一个撞上
+  端口/栈相撞——旧布局空栈 SP=0、栈从 0xFF 向下，第二格恰好是 0xFE：
+  PUSH 存现场被端口钩子当成打字捕获（多出 \x00），ST 打字又覆盖栈里
+  保存的 R2，尾声"还原"出 ASCII 数字泄漏进下轮输出。当年（见 git 历史）
+  本程序曾以端口 0x9E 绕行；机器修复（SP 初始 0→0xFC，I/O 阁楼避栈，
+  6502 专页做栈的同款思路）后回归惯例端口 0xFE——本套件用 0xFE 跑全绿，
+  正是那次修复的验收现场。
 """
 from ASM.asm import assemble
 from CPU import isa
 from CPU.cpu import CPU
 from MEM.ram import RAM
 
-PORT = 0x9E         # 控制台端口（本程序专用地址，避开栈区——见上）
+PORT = 0xFE         # 控制台端口（惯例位；端口/栈已分家，见文件头花絮）
 ARR = 0xA0          # 数组基地址（惯例数据区）
+SP_EMPTY = 0xFC     # 空栈哨兵（端口/栈分家后的新惯例）
 
 
 class ConsoleDevice(RAM):
@@ -102,7 +103,7 @@ pd_split:
     JNZ pd_split            ; 还有高位 -> 继续拆
 pd_pop:
     POP R0                  ; * 后进先出 = 高位先出
-    ST  R0, [0x9E]          ; 打一个字符（端口 0x9E——避开栈区，见文件头）
+    ST  R0, [0xFE]          ; 打一个字符（惯例端口——栈已分家，见文件头花絮）
     DEC R3
     JNZ pd_pop
     POP R4                  ; 尾声：逆序还原现场
@@ -188,7 +189,7 @@ c_loop:
     LDX R0, R1              ; R0 = arr[i]（每轮重装——R0 是消耗品）
     CALL print_dec          ; 打印（好公民：不碰 R1，R2-R4 自还原）
     LDI R0, #32             ; 空格分隔
-    ST  R0, [0x9E]
+    ST  R0, [0xFE]
     INC R1
     DEC R4
     JNZ c_loop
@@ -237,7 +238,7 @@ def act1():
         cpu = make_machine(assemble_img(driver_a(val)))
         instrs, halted = cpu.run()
         got = "".join(chr(b) for b in cpu.ram.out)
-        check(f"打印 {val}", (got, halted, cpu.sp.value), (str(val), True, 0))
+        check(f"打印 {val}", (got, halted, cpu.sp.value), (str(val), True, SP_EMPTY))
         print(f"  {val:>5} {got:>8} {str(val):>8} {instrs:>6} │"
               f" {'✓' if got == str(val) else '✗'}")
 
@@ -262,7 +263,7 @@ def act2():
         instrs, halted = cpu.run()
         got = [cpu.ram.read(ARR + i) for i in range(len(arr))]
         want = sorted(arr)
-        ok = check(f"排序 {name}", (got, halted, cpu.sp.value), (want, True, 0))
+        ok = check(f"排序 {name}", (got, halted, cpu.sp.value), (want, True, SP_EMPTY))
         print(f"  {name:<8} {instrs:>6} │ {got} {'✓' if ok else '✗ 期望 ' + str(want)}")
 
 
@@ -283,10 +284,10 @@ def act3():
         want = " ".join(map(str, sorted(arr))) + " "      # 机器每数后打一个空格
         consts_ok = [cpu.rf.read(i) for i in (5, 6, 7)] == [0, 10, 48]
         ok = check(f"端到端 {arr}",
-                   (got, halted, cpu.sp.value, consts_ok), (want, True, 0, True))
+                   (got, halted, cpu.sp.value, consts_ok), (want, True, SP_EMPTY, True))
         print(f"  机器输出：{got!r}{'✓' if ok else ' ✗ 期望 ' + repr(want)}（{instrs} 条）")
         print(f"  全局常数幸存（R5/R6/R7 仍是 0/10/48）：{'✓' if consts_ok else '✗'}"
-              f"  SP 归零：{'✓' if cpu.sp.value == 0 else '✗'}")
+              f"  SP 归位：{'✓' if cpu.sp.value == SP_EMPTY else '✗'}")
 
 
 # ---------- 账本 ----------
@@ -310,7 +311,7 @@ def ledger():
 
 def main():
     toolchain_check(assemble_img(DRIVER_C), "驱动+库")
-    print("  端口 0x9E（避栈区）；0xFE 与栈第 2 格相撞的花絮见文件头注释")
+    print("  端口 0xFE（惯例位）——当年 0x9E 避栈时代见文件头花絮与 git 历史")
     act1()
     act2()
     act3()
@@ -319,7 +320,7 @@ def main():
     print(f"三幕 {TOTAL} 项断言全部通过 ✓" if FAILS == 0
           else f"{TOTAL} 项断言中 {FAILS} 项失败 ✗")
     print("验收结论：.asm 文本 → 机器码 → 正确结果，工具链全链路无断点；")
-    print("子程序可复用（print_dec 被循环安全调用 8 次），栈纪律全程 SP 归零。")
+    print("子程序可复用（print_dec 被循环安全调用 8 次），栈纪律全程 SP 归位。")
 
 
 if __name__ == "__main__":

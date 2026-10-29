@@ -5,9 +5,13 @@
 一拍内严格走时序纪律：读旧值 → 组合计算 → d()/write() 声明 →
 clk.tick() 统一提交——同拍一致性由结构保证。
 
-硬件栈（CALL/RET 用）：SP 是普通 8 位寄存器，空栈时 SP=0；PUSH 即
+硬件栈（CALL/RET 用）：SP 是普通 8 位寄存器，空栈时 SP=0xFC；PUSH 即
 "SP 先减 1（经减法器，回绕）、再写 mem[SP]"，POP 即"先读 mem[SP]、
-SP 再加 1"——栈从 0xFF 向下生长。栈溢出无保护（与真实 8 位机一致）。
+SP 再加 1"——栈从 0xFB 向下生长，与数据区相向而行（相遇即溢出，
+无保护，与真实 8 位机一致）。空栈定在 0xFC 是"端口/栈分家"：
+0xFC~0xFF 是 I/O 阁楼（键盘 0xFC / 回车 0xFD / 控制台 0xFE / 0xFF
+预留），栈从阁楼下方向下生长、永不路过端口——旧布局空栈=0、栈从
+0xFF 下来，第 2 层恰好压住 0xFE（tenth_acceptance 的花絮现场）。
 
 HALT 的语义是"停时钟"：仿真层布尔标志，不经时钟纪律。
 """
@@ -29,7 +33,7 @@ class CPU:
         self.ram = RAM()
         self.flag_z, self.flag_n = DFlipFlop(), DFlipFlop()
         self.flag_c, self.flag_v = DFlipFlop(), DFlipFlop()
-        self.sp = Register("SP", init=0)          # 栈指针：空栈=0，回绕生长到 0xFF
+        self.sp = Register("SP", init=0xFC)       # 栈指针：空栈=0xFC（I/O 阁楼下，见模块注释）
         self.halted = False
         self.instr_count = 0
         if program:
@@ -89,7 +93,7 @@ class CPU:
             return False
         elif sig.jump == "CALL":
             ret, _, _ = add8(self.pc.value, 2)        # 返回地址 = CALL 的下一条
-            sp_new, _, _ = sub8(self.sp.value, 1)     # SP-1（0 回绕到 0xFF）
+            sp_new, _, _ = sub8(self.sp.value, 1)     # SP-1（深溢出才回绕，无保护）
             self.ram.write(sp_new, ret)               # 声明压栈
             self.sp.d(sp_new)                         # 声明栈指针前移
             self.pc.load(other)                       # 声明跳入子程序

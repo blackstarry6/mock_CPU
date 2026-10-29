@@ -174,7 +174,7 @@ def test_end_to_end():
     n, halted = cpu.run()
     check("递归 停机", halted, True)
     check("递归 sum(10)=55", cpu.rf.read(1), 55)
-    check("递归 SP 归零", cpu.sp.value, 0)
+    check("递归 SP 归位", cpu.sp.value, 0xFC)
 
     # PUSH/POP 验收：递归 fib（两次递归调用，靠栈保存现场）
     src = """
@@ -207,7 +207,7 @@ def test_end_to_end():
     cpu = CPU(assemble(src))
     n, halted = cpu.run()
     check("递归 fib(10)=55", cpu.rf.read(1), 55)
-    check("递归 fib SP 归零", cpu.sp.value, 0)
+    check("递归 fib SP 归位", cpu.sp.value, 0xFC)
     check("递归 fib 停机", halted, True)
 
     # 寄存器间接寻址：LDX/STX 拷贝字符串，指针步进靠 INC——全程无自修改补丁

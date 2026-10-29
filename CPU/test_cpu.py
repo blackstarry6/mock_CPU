@@ -13,6 +13,7 @@ from .cpu import CPU
 
 TOTAL = 0
 FAILS = 0
+SP_EMPTY = 0xFC     # 空栈哨兵（端口/栈分家：I/O 阁楼 0xFC~0xFF 避栈）
 
 
 def check(name, got, want):
@@ -103,6 +104,7 @@ def test_single():
     cpu, _, h = run_prog(isa.I_LDI(3, 0x7F) + isa.I_HALT())
     check("LDI 装载", cpu.rf.read(3), 0x7F)
     check("正常停机", h, True)
+    check("SP 初始 0xFC（端口/栈分家）", CPU().sp.value, SP_EMPTY)
 
     cpu, _, _ = run_prog(isa.I_LDI(0, 9) + isa.I_MOV(5, 0) + isa.I_HALT())
     check("MOV 传送", cpu.rf.read(5), 9)
@@ -260,7 +262,7 @@ def test_subroutines():
     cpu, _, h = run_prog(prog)
     check("调用·子程序执行", cpu.rf.read(2), 9)
     check("调用·返回点正确", cpu.rf.read(1), 1)
-    check("调用·SP 归零", cpu.sp.value, 0)
+    check("调用·SP 归位", cpu.sp.value, SP_EMPTY)
 
     # 同一子程序被两处调用：各自返回各自的现场
     prog = (isa.I_CALL(0x0A) +              # 0x00 → 回 0x02
@@ -269,7 +271,7 @@ def test_subroutines():
             [0, 0, 0, 0] +                  # 0x06-0x09 填充
             isa.I_UN("INC", 4) + isa.I_RET())   # 0x0A: 子程序
     cpu, _, h = run_prog(prog)
-    check("两处调用·各回各家", (cpu.rf.read(4), cpu.sp.value, h), (2, 0, True))
+    check("两处调用·各回各家", (cpu.rf.read(4), cpu.sp.value, h), (2, SP_EMPTY, True))
 
     # 嵌套 A→B→C：三层返回地址同时入栈，LIFO 逐层解开
     prog = (isa.I_LDI(1, 1) + isa.I_LDI(2, 2) + isa.I_LDI(3, 3) +
@@ -285,7 +287,7 @@ def test_subroutines():
     check("嵌套·C 执行", cpu.ram.read(0x90), 3)
     check("嵌套·B 在 C 返回后继续", cpu.ram.read(0x91), 2)
     check("嵌套·A 在 B 返回后继续", cpu.ram.read(0x92), 1)
-    check("嵌套·SP 归零", cpu.sp.value, 0)
+    check("嵌套·SP 归位", cpu.sp.value, SP_EMPTY)
 
     # 递归求和 sum(1..n)：下降前先累加（R1 += R0），无需调用后局部变量
     for n, want in [(1, 1), (5, 15), (10, 55), (50, 1275 & 0xFF)]:
@@ -299,7 +301,7 @@ def test_subroutines():
                 isa.I_CALL(0x0A) +          # 0x12: 递归
                 isa.I_RET())                # 0x14
         cpu, _, h = run_prog(prog)
-        check(f"递归 sum({n})", (cpu.rf.read(1), cpu.sp.value, h), (want, 0, True))
+        check(f"递归 sum({n})", (cpu.rf.read(1), cpu.sp.value, h), (want, SP_EMPTY, True))
 
 
 # ---------- ⑥ PUSH/POP：栈上保存/恢复现场，fib 验收 ----------
@@ -317,7 +319,7 @@ def test_push_pop():
     cpu, _, h = run_prog(prog)
     check("LIFO·后进先出", cpu.rf.read(1), 0)
     check("LIFO·先进后出", cpu.rf.read(2), 0x5A)
-    check("LIFO·SP 归零", cpu.sp.value, 0)
+    check("LIFO·SP 归位", cpu.sp.value, SP_EMPTY)
 
     # 跨调用保存现场：子程序内部毁掉 R0，靠 PUSH/POP 完璧归赵
     prog = (isa.I_LDI(0, 77) +
@@ -327,7 +329,7 @@ def test_push_pop():
             isa.I_LDI(0, 0) + isa.I_UN("INC", 0) +   # 随意毁 R0
             isa.I_POP(0) + isa.I_RET())
     cpu, _, h = run_prog(prog)
-    check("跨调用·R0 恢复", (cpu.rf.read(0), cpu.sp.value, h), (77, 0, True))
+    check("跨调用·R0 恢复", (cpu.rf.read(0), cpu.sp.value, h), (77, SP_EMPTY, True))
 
     # 定义直译版阶乘：乘法在递归之后（无 PUSH/POP 时算出 0 的那个版本）
     for n in range(8):
@@ -344,7 +346,7 @@ def test_push_pop():
                 isa.I_RET())                # 0x18
         cpu, _, h = run_prog(prog)
         check(f"阶乘 {n}!", (cpu.rf.read(1), cpu.sp.value, h),
-              (math.factorial(n) & 0xFF, 0, True))
+              (math.factorial(n) & 0xFF, SP_EMPTY, True))
 
     # fib 验收：两次递归调用，n 与第一次结果都要活过第二次调用
     for n, want in [(0, 0), (1, 1), (2, 1), (3, 2), (4, 3), (5, 5), (7, 13), (10, 55)]:
@@ -368,7 +370,7 @@ def test_push_pop():
                 isa.I_LDI(1, 0) + isa.I_RET() +   # 0x28: zero
                 isa.I_LDI(1, 1) + isa.I_RET())    # 0x2C: one
         cpu, _, h = run_prog(prog)
-        check(f"fib({n})", (cpu.rf.read(1), cpu.sp.value, h), (want, 0, True))
+        check(f"fib({n})", (cpu.rf.read(1), cpu.sp.value, h), (want, SP_EMPTY, True))
 
 
 # ---------- ⑦ 寄存器间接寻址 LDX/STX ----------
