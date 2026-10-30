@@ -71,6 +71,8 @@ def test_isa():
             check(f"{name} R{r}", isa.decode(*isa.I_ALU(name, r, 7)), (name, r, 7))
         for name in isa.UN_OPS:
             check(f"{name} R{r}", isa.decode(*isa.I_UN(name, r)), (name, r, None))
+        for name in isa.UN2_OPS:
+            check(f"{name} R{r}", isa.decode(*isa.I_UN2(name, r)), (name, r, None))
     for name in isa.JUMPS:
         check(f"{name}", isa.decode(*isa.I_JMP(name, 0x42)), (name, None, 0x42))
     check("CALL", isa.decode(*isa.I_CALL(0x42)), ("CALL", None, 0x42))
@@ -621,6 +623,61 @@ def test_inc_dec_carry():
     check("INC 回绕·Z=1 仍可检测", (cpu.rf.read(0), cpu.flags()["Z"]), (0, 1))
 
 
+# ---------- ⑩ 位操作单目 NOT/ROL/ROR：穿 C 的旋转与取反 ----------
+
+def test_bitops():
+    """NOT/ROL/ROR（ISA 身份新补；ROL/ROR 为穿 C 的链式旋转，6502 同款）。"""
+    # 微码：NOT 保链（"ZN"——无转出位可言）；ROL/ROR 的 cin 接 C（FLAG 客户）
+    check("微码·NOT 只写 Z/N", control.MICROCODE["NOT"].flags, "ZN")
+    check("微码·ROL cin 接 C", control.MICROCODE["ROL"].c_from, "FLAG")
+    check("微码·ROR cin 接 C", control.MICROCODE["ROR"].c_from, "FLAG")
+
+    # 经 C 的旋转：C 绕入空位、转出位回 C
+    prog = (isa.I_LDI(0, 255) + isa.I_LDI(1, 1) + isa.I_ALU("ADD", 0, 1)  # C=1
+            + isa.I_LDI(2, 0x00) + isa.I_UN2("ROL", 2) + isa.I_HALT())    # 1 绕入 bit0
+    cpu, _, _ = run_prog(prog)
+    check("ROL·C=1 绕入 bit0", (cpu.rf.read(2), cpu.flags()["C"]), (0x01, 0))
+    prog = (isa.I_LDI(0, 255) + isa.I_LDI(1, 1) + isa.I_ALU("ADD", 0, 1)  # C=1
+            + isa.I_LDI(2, 0x00) + isa.I_UN2("ROR", 2) + isa.I_HALT())    # 1 绕入 bit7
+    cpu, _, _ = run_prog(prog)
+    check("ROR·C=1 绕入 bit7", (cpu.rf.read(2), cpu.flags()["C"]), (0x80, 0))
+    cpu, _, _ = run_prog(isa.I_LDI(0, 0x80) + isa.I_UN2("ROL", 0) + isa.I_HALT())
+    check("ROL·b7 转出进 C", (cpu.rf.read(0), cpu.flags()["C"]), (0x00, 1))
+
+    # NOT：取反 + 保 C
+    cpu, _, _ = run_prog(isa.I_LDI(0, 0x0F) + isa.I_UN2("NOT", 0) + isa.I_HALT())
+    check("NOT 0x0F", (cpu.rf.read(0), cpu.flags()["N"]), (0xF0, 1))
+    prog = (isa.I_LDI(0, 255) + isa.I_LDI(1, 1) + isa.I_ALU("ADD", 0, 1)  # C=1
+            + isa.I_LDI(2, 0x0F) + isa.I_UN2("NOT", 2) + isa.I_HALT())
+    cpu, _, _ = run_prog(prog)
+    check("NOT·C 保持=1", (cpu.rf.read(2), cpu.flags()["C"]), (0xF0, 1))
+
+    # ★ 16 位移位链：SHL lo / ROL hi（左）与 SHR hi / ROR lo（右）
+    #   ——多字节数第一次能移位（此前 fifth_division 只能靠分支舞蹈绕行）
+    CASES16 = [0x0001, 0x0080, 0x00FF, 0x1234, 0xABCD, 0x8000, 0xFFFF]
+    for a in CASES16:
+        prog = (isa.I_LDI(0, a & 0xFF) + isa.I_LDI(1, a >> 8)
+                + isa.I_UN("SHL", 0) + isa.I_UN2("ROL", 1) + isa.I_HALT())
+        cpu, _, h = run_prog(prog)
+        w = a << 1
+        check(f"16 位左移 {a:#06x}",
+              (cpu.rf.read(0), cpu.rf.read(1), cpu.flags()["C"], h),
+              (w & 0xFF, (w >> 8) & 0xFF, w >> 16, True))
+        prog = (isa.I_LDI(0, a & 0xFF) + isa.I_LDI(1, a >> 8)
+                + isa.I_UN("SHR", 1) + isa.I_UN2("ROR", 0) + isa.I_HALT())
+        cpu, _, h = run_prog(prog)
+        w = a >> 1
+        check(f"16 位右移 {a:#06x}",
+              (cpu.rf.read(0), cpu.rf.read(1), cpu.flags()["C"], h),
+              (w & 0xFF, w >> 8, a & 1, True))
+
+    # ★ NEG 惯用法：NOT + INC = 0 − a（补码的定义本身：取反加一）
+    for a in (0, 1, 5, 127, 128, 200, 255):
+        prog = (isa.I_LDI(0, a) + isa.I_UN2("NOT", 0) + isa.I_UN("INC", 0) + isa.I_HALT())
+        cpu, _, _ = run_prog(prog)
+        check(f"NEG({a}) = NOT+INC", cpu.rf.read(0), (-a) & 0xFF)
+
+
 def main():
     for name, fn in [
         ("ISA 编解码往返", test_isa),
@@ -631,6 +688,7 @@ def main():
         ("寄存器间接寻址 LDX/STX", test_indirect),
         ("带进位加减 ADC/SBB", test_carry),
         ("INC/DEC 保持 C/V", test_inc_dec_carry),
+        ("位操作单目 NOT/ROL/ROR", test_bitops),
         ("循环累加差分", test_loop_sum),
         ("循环乘法差分", test_loop_mul),
         ("斐波那契差分", test_fibonacci),

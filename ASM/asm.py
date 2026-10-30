@@ -9,7 +9,7 @@
     跳转目标   标号名或数字
     伪指令     .org 0x80        其后内容放到该地址（中间补 0，只许前进）
                .db 1,2,"AB"     直接放数据/字符串（ASCII 展开；串内勿含逗号）
-    指令       与 isa.MNEMONICS 一致的全部 32 条（大小写不敏感）
+    指令       与 isa.MNEMONICS 一致的全部 35 条（大小写不敏感）
 
 两遍扫描：第一遍定位（位置计数器 LC 数地址、建符号表），第二遍生成
 （查表填跳转目标）。编码规则的单一事实源在 isa.py——本模块全部经
@@ -46,6 +46,8 @@ _SIGS["ADC"] = (("reg", "reg"), isa.I_ADC)   # 带进位加减：独立编码段
 _SIGS["SBB"] = (("reg", "reg"), isa.I_SBB)
 _SIGS.update({name: (("reg",), lambda r, _n=name: isa.I_UN(_n, r))
               for name in isa.UN_OPS})
+_SIGS.update({name: (("reg",), lambda r, _n=name: isa.I_UN2(_n, r))
+              for name in isa.UN2_OPS})
 _SIGS.update({name: (("target",), lambda t, _n=name: isa.I_JMP(_n, t))
               for name in isa.JUMPS})
 _SIGS["CALL"] = (("target",), isa.I_CALL)

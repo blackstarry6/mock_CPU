@@ -32,11 +32,16 @@ def test_encode_diff():
             check(f"{name} R{r}", assemble(f"{name} R{r}, R7"), isa.I_ALU(name, r, 7))
         for name in isa.UN_OPS:
             check(f"{name} R{r}", assemble(f"{name} R{r}"), isa.I_UN(name, r))
+        for name in isa.UN2_OPS:
+            check(f"{name} R{r}", assemble(f"{name} R{r}"), isa.I_UN2(name, r))
     for r in range(8):
         check(f"ADC R{r}", assemble(f"ADC R{r}, R7"), isa.I_ADC(r, 7))
         check(f"SBB R{r}", assemble(f"SBB R{r}, R7"), isa.I_SBB(r, 7))
     check("ADC 编码段 0xA0", assemble("ADC R0, R1"), [0xA0, 1])
     check("SBB 编码段 0xA8", assemble("SBB R0, R1"), [0xA8, 1])
+    check("NOT 编码段 0xB0", assemble("NOT R0"), [0xB0, 0])
+    check("ROL 编码段 0xB8", assemble("ROL R0"), [0xB8, 0])
+    check("ROR 编码段 0xC0", assemble("ROR R0"), [0xC0, 0])
     for name in isa.JUMPS:
         check(f"{name}", assemble(f"{name} 0x42"), isa.I_JMP(name, 0x42))
     check("CALL", assemble("CALL 0x42"), isa.I_CALL(0x42))
@@ -248,6 +253,20 @@ def test_end_to_end():
     check("16 位加·低字节回绕", cpu.rf.read(0), 0x00)
     check("16 位加·高字节吃进位", cpu.rf.read(2), 0x01)
     check("16 位加·停机", halted, True)
+
+    # 16 位移位链（ROL 穿 C）：0x00FF << 1 = 0x01FE
+    src = """
+        LDI R0, #0xFF     ; 低字节
+        LDI R1, #0x00     ; 高字节
+        SHL R0            ; → 0xFE，C=1
+        ROL R1            ; C 绕入 → 0x01
+        HALT
+    """
+    cpu = CPU(assemble(src))
+    n, halted = cpu.run()
+    check("16 位移位·低字节", cpu.rf.read(0), 0xFE)
+    check("16 位移位·高字节吃 C", cpu.rf.read(1), 0x01)
+    check("16 位移位·停机", halted, True)
 
 
 def main():

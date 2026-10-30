@@ -18,8 +18,9 @@
           对齐 x86 INC 保全 CF / 6502 INX 不碰 C 的设计）
   jump    PC 下一拍：None=顺序 +2 / 条件名 / "CALL"=压返回地址并跳 /
           "RET"=弹返回地址 / "HALT"=停机
-  c_from  加法器进位输入的 3 选 1：ZERO=接地（ADD）/ ONE=接电源（SUB
-          补码的 +1）/ FLAG=接 C 标志（ADC/SBB 的反馈线）/ None=不关心
+  c_from  加法器/旋转器进位输入的 3 选 1：ZERO=接地（ADD）/ ONE=接电源
+          （SUB 补码的 +1）/ FLAG=接 C 标志（ADC/SBB/ROL/ROR 的反馈线）/
+          None=不关心
 """
 from collections import namedtuple
 
@@ -52,6 +53,12 @@ MICROCODE = {
     "DEC": Signals("RF_SELF", "SUB", "ONE", "RF", "ZN", None, "ONE"),
     "SHL": Signals("RF_SELF", "SHL", None, "RF", True, None),
     "SHR": Signals("RF_SELF", "SHR", None, "RF", True, None),
+    # ---- 位操作单目（ALU 早已实现，此处补 ISA 身份）----
+    # NOT 无"转出的位"、C 对它无话可说——保链（同 INC/DEC，"ZN"）；
+    # ROL/ROR 穿 C 旋转：cin 接 C（FLAG）、C 写回转出位——多字节移位链
+    "NOT": Signals("RF_SELF", "NOT", None, "RF", "ZN", None),
+    "ROL": Signals("RF_SELF", "ROL", None, "RF", True, None, "FLAG"),
+    "ROR": Signals("RF_SELF", "ROR", None, "RF", True, None, "FLAG"),
     # ---- 跳转：无运算无写回，读当前标志定去留 ----
     "JMP": Signals(None, None, None, None, False, "JMP"),
     "JZ":  Signals(None, None, None, None, False, "JZ"),

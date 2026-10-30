@@ -16,6 +16,9 @@
     0x98-0x9F  STX Rs, [Rn]         写间接：mem[Rn 的内容] ← Rs
     0xA0-0xA7  ADC Rd, Rs           带进位加：Rd ← Rd+Rs+C（多字节加法链）
     0xA8-0xAF  SBB Rd, Rs           带借位减：Rd ← Rd−Rs−借位（cin=C）
+    0xB0-0xB7  NOT Ri               按位取反（NEG 惯用法：NOT + INC = 0−a）
+    0xB8-0xBF  ROL Ri               循环左移经 C（多字节移位链：SHL lo / ROL hi）
+    0xC0-0xC7  ROR Ri               循环右移经 C（SHR hi / ROR lo）
     0xE0       CALL [target]       调用子程序（返回地址压栈）
     0xE1       RET                 返回（弹出返回地址装回 PC）
     0xF0       HALT
@@ -34,13 +37,15 @@ _ALU_BASE, _UN_BASE, _JMP_BASE = 0x20, 0x58, 0x78
 _PUSH_BASE, _POP_BASE = 0x80, 0x88
 _LDX_BASE, _STX_BASE = 0x90, 0x98
 _ADC_BASE, _SBB_BASE = 0xA0, 0xA8     # 填操作码空洞：不动既有编码
+_UN2_BASE = 0xB0
 
 ALU_OPS = ("ADD", "SUB", "AND", "OR", "XOR", "MUL", "CMP")
 CARRY_OPS = ("ADC", "SBB")    # 带进位加减：独立编码段，数据通路复用 ADD/SUB
 UN_OPS = ("INC", "DEC", "SHL", "SHR")
+UN2_OPS = ("NOT", "ROL", "ROR")   # 位操作单目第二段：ALU 早已实现，此处补 ISA 身份
 JUMPS = ("JMP", "JZ", "JNZ", "JC", "JNC", "JN", "JNN", "JV")
 MNEMONICS = (("LDI", "MOV", "LD", "ST", "LDX", "STX") + ALU_OPS + CARRY_OPS
-             + UN_OPS + JUMPS + ("PUSH", "POP", "CALL", "RET", "HALT"))
+             + UN_OPS + UN2_OPS + JUMPS + ("PUSH", "POP", "CALL", "RET", "HALT"))
 
 
 # ---------- 汇编辅助：助记符 → 机器码（每条两字节） ----------
@@ -63,6 +68,10 @@ def I_ALU(name, rd, rs):
 
 def I_UN(name, r):
     return [_UN_BASE + (UN_OPS.index(name) << 3) + (r & 7), 0]
+
+
+def I_UN2(name, r):
+    return [_UN2_BASE + (UN2_OPS.index(name) << 3) + (r & 7), 0]
 
 def I_JMP(name, target):
     return [_JMP_BASE | JUMPS.index(name), target & 0xFF]
@@ -130,6 +139,8 @@ def decode(op, arg):
         return ALU_OPS[(op - _ALU_BASE) >> 3], op & 7, arg & 7
     if _UN_BASE <= op <= _UN_BASE + len(UN_OPS) * 8 - 1:
         return UN_OPS[(op - _UN_BASE) >> 3], op & 7, None
+    if _UN2_BASE <= op <= _UN2_BASE + len(UN2_OPS) * 8 - 1:
+        return UN2_OPS[(op - _UN2_BASE) >> 3], op & 7, None
     if _JMP_BASE <= op <= 0x7F:
         return JUMPS[op - _JMP_BASE], None, arg & 0xFF
     if op == OP_CALL:
@@ -154,7 +165,7 @@ def disasm(op, arg):
         return f"ST  R{reg}, [{other:#04x}]"
     if name in ALU_OPS or name in CARRY_OPS:
         return f"{name} R{reg}, R{other}"
-    if name in UN_OPS:
+    if name in UN_OPS or name in UN2_OPS:
         return f"{name} R{reg}"
     if name in JUMPS:
         return f"{name} {other:#04x}"

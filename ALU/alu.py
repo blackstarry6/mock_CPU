@@ -2,8 +2,8 @@
 
 全部运算基于 gate.py 的门电路与 full_adder.py 的加法器实现。
 进位输入（cin）：加减法器天生带 cin 端口，控制器选择接 0（ADD）、
-接 1（SUB 补码的 +1）还是接 C 标志（ADC/SBB）——带进位指令不是
-新电路，是同一加减法器换一个进位来源。
+接 1（SUB 补码的 +1）还是接 C 标志（ADC/SBB/ROL/ROR——带进位指令
+不是新电路，是同一加减法器/旋转器换一个进位来源）。
 
 标志位定义（对齐主流 8 位 CPU 惯例）：
   Z — 结果为 0（用 NOR 门对全部位或之后取反得到）
@@ -92,6 +92,10 @@ def alu_not(a, b=0):
 
 
 # ---------- 移位 / 循环移位 ----------
+# SHL/SHR：左/右移，空位补 0，转出位进 C；
+# ROL/ROR：经 C 的循环移位（6502 同款）——C 绕入空位、转出位回 C，
+# 多字节移位链的原语（SHL lo / ROL hi）。字节内自转变体（x86 ROL / Z80
+# RLCA 那种不经过 C 的）不设：本机只留链式一种，C 是通用的一位总线。
 
 def alu_shl(a, b=0):
     bits = to_bits(a)
@@ -105,15 +109,15 @@ def alu_shr(a, b=0):
     return from_bits(out), _mkflags(out, c=bits[0])
 
 
-def alu_rol(a, b=0):
+def alu_rol(a, b=0, cin=0):
     bits = to_bits(a)
-    out = [bits[-1]] + bits[:-1]  # bit7 绕回 bit0
+    out = [cin] + bits[:-1]      # C 绕入 bit0，bit7 转出回 C
     return from_bits(out), _mkflags(out, c=bits[-1])
 
 
-def alu_ror(a, b=0):
+def alu_ror(a, b=0, cin=0):
     bits = to_bits(a)
-    out = bits[1:] + [bits[0]]    # bit0 绕回 bit7
+    out = bits[1:] + [cin]       # C 绕入 bit7，bit0 转出回 C
     return from_bits(out), _mkflags(out, c=bits[0])
 
 
@@ -138,11 +142,12 @@ def alu(op, a, b=0, cin=None):
     """执行运算，返回 (结果, 标志位字典)。MUL 结果 16 位，其余 8 位。
 
     输入自动截断到 8 位（对齐硬件：超出位宽的输入被忽略）。
-    cin 是进位输入端口：数据通路上只有加减法器有这根线（逻辑/移位/
-    乘法没有进位输入），控制器用它区分 ADD/ADC、SUB/SBB。不传 cin
-    则用运算自己的默认（ADD=0 / SUB=1，即普通加减法的历史语义）。
+    cin 是进位输入端口：数据通路上只有加减法器和循环移位器有这根线
+    （逻辑/普通移位/乘法没有进位输入），控制器用它区分 ADD/ADC、SUB/SBB，
+    并让 ROL/ROR 穿过 C 标志完成多字节移位链。不传 cin 则用运算自己的
+    默认（ADD/ROL/ROR=0 / SUB=1，即各自的历史语义）。
     """
-    if op in ("ADD", "SUB"):
+    if op in ("ADD", "SUB", "ROL", "ROR"):
         if cin is None:
             return OPS[op](a & MASK, b & MASK)
         return OPS[op](a & MASK, b & MASK, cin)

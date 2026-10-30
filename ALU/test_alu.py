@@ -68,14 +68,17 @@ def test_not():
 def test_shift():
     for a in range(256):
         cases = [
-            ("SHL", ((a << 1) & 0xFF, (a >> 7) & 1)),
-            ("SHR", (a >> 1, a & 1)),
-            ("ROL", ((a << 1 | a >> 7) & 0xFF, (a >> 7) & 1)),
-            ("ROR", ((a >> 1 | a << 7) & 0xFF, a & 1)),
+            ("SHL", 0, ((a << 1) & 0xFF, (a >> 7) & 1)),
+            ("SHR", 0, (a >> 1, a & 1)),
+            # ROL/ROR 穿 C 旋转：cin=0 退化为 SHL/SHR；cin=1 时 C 绕入空位
+            ("ROL", 0, ((a << 1) & 0xFF, (a >> 7) & 1)),
+            ("ROL", 1, ((a << 1 | 1) & 0xFF, (a >> 7) & 1)),
+            ("ROR", 0, (a >> 1, a & 1)),
+            ("ROR", 1, (((a >> 1) | 0x80) & 0xFF, a & 1)),
         ]
-        for op, (want, carry) in cases:
-            r, f = alu(op, a, 0)
-            d = f"{op} {a}"
+        for op, cin, (want, carry) in cases:
+            r, f = alu(op, a, 0, cin=cin)
+            d = f"{op} {a},cin={cin}"
             check(op, r, want, d)
             check(op + ".Z", f["Z"], int(r == 0), d)
             check(op + ".N", f["N"], (r >> 7) & 1, d)

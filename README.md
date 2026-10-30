@@ -23,14 +23,14 @@
   - `ram.py` 256 字节同步 RAM（读组合、写打拍、load_program 烧写）
   - `test_ram.py`
 - `CPU/` — 指令集与整机（阶段三）
-  - `isa.py` 统一双字节指令编码、32 种助记符、汇编辅助与反汇编
+  - `isa.py` 统一双字节指令编码、35 种助记符、汇编辅助与反汇编
   - `control.py` 控制器（"微程序 ROM"查找表 + 跳转条件判断；CMP/INC/DEC 派生；
     c_from 字段选择加法器进位来源 0/1/C——ADC/SBB 与 ADD/SUB 只差这一格）
   - `cpu.py` 整机接线 + step()/run()（一拍一条指令，统一提交）
-  - `test_cpu.py` 单指令 → 条件分支 → 循环程序差分（377 项断言）
+  - `test_cpu.py` 单指令 → 条件分支 → 循环程序差分（430 项断言）
 - `ASM/` — 迷你汇编器（工具层，只依赖 isa，零机器改动）
   - `asm.py` 两遍扫描：标号自动解析、`.org`/`.db` 伪指令、CLI（`--run` 上机执行）
-  - `test_asm.py` 236 项断言（编码差分/标号/错误/端到端）；`example.asm`、
+  - `test_asm.py` 266 项断言（编码差分/标号/错误/端到端）；`example.asm`、
     `sub_demo.asm`（递归求和）、`pushpop_demo.asm`（PUSH/POP 阶乘）示例
 - `first_program.py` — 入门示例：带指令跟踪的阶乘循环程序（见「第一个程序」）
 - `second_hello.py` — 第二个示例：内存映射 I/O + 自修改代码打印字符串（见「第二个程序」）
@@ -85,9 +85,10 @@ RF.read（门级 MUX 译码选择）─A,B→ ALU ─结果+标志┤
                    clk.tick() ← 全机唯一提交点：PC、寄存器、RAM、标志同时翻转
 ```
 
-第七个控制信号 `c_from` 选择加法器进位来源（0 / 1 / C 标志）：ADC/SBB
-不是新电路，是同一加减法器换一个进位来源——C 标志的旧值经反馈线回到
-ALU 进位口，进位得以跨指令接力（本拍算出的新标志要等 tick 才提交）。
+第七个控制信号 `c_from` 选择加法器/旋转器进位来源（0 / 1 / C 标志）：
+ADC/SBB 不是新电路，是同一加减法器换一个进位来源——C 标志的旧值经
+反馈线回到 ALU 进位口，进位得以跨指令接力（本拍算出的新标志要等 tick
+才提交）；ROL/ROR 也走这根线穿 C 旋转，完成多字节移位链。
 
 内存地图（端口/栈分家后正式分区——tenth 的相撞花絮推动此图诞生：
 此前各约定逐站累积，从未对过总账）：
@@ -110,7 +111,7 @@ CPU 377——底层全绿，上层失败只需查上层。
 ```bash
 python -m CPU.cpu           # 整机演示：带指令跟踪的累加循环
 python -m CPU.test_cpu      # CPU 测试（含斐波那契等循环程序差分，约 3 秒）
-python -m ASM.test_asm      # 汇编器测试（236 项断言，瞬时）
+python -m ASM.test_asm      # 汇编器测试（266 项断言，瞬时）
 python -m ASM.asm ASM/example.asm        # 汇编：打印机器码 + 反汇编
 python -m ASM.asm ASM/example.asm --run  # 汇编 + 上机执行（带跟踪）
 python -m ASM.asm ASM/sub_demo.asm --run # 递归求和演示（CALL/RET 硬件栈）
@@ -414,6 +415,8 @@ LDX/STX         寄存器间接读写（地址 = 指针寄存器内容，Rd←me
 ADD SUB AND OR XOR MUL CMP   R0~R7 寄存器运算，CMP 只更新标志不写回
 ADC SBB         带进位加减（进位输入 = C 标志）：多字节运算的进位链
 INC DEC SHL SHR 单目运算（INC/DEC 即 B=1 的 ADD/SUB，但只写 Z/N——C/V 保持）
+NOT ROL ROR      位操作单目：NOT 取反（只写 Z/N，NEG 惯用法 NOT+INC）；
+                 ROL/ROR 穿 C 旋转（cin=C）——多字节移位链原语 SHL lo/ROL hi
 JMP JZ JNZ JC JNC JN JNN JV 条件跳转（消费 Z/N/C/V）
 CALL/RET 子程序调用与返回（硬件栈：SP 空栈=0，返回地址压栈，栈从 0xFF 向下生长）
 PUSH/POP 压栈/弹栈（保存与恢复现场——递归中"活过下一次调用"的保障，序言/尾声雏形）
@@ -439,7 +442,7 @@ HALT 停机；0xF8 预留 DIV
 根除。
 
 ```bash
-python -m ASM.test_asm                     # 236 项断言（瞬时）
+python -m ASM.test_asm                     # 266 项断言（瞬时）
 python -m ASM.asm ASM/example.asm          # 翻译：机器码 + 反汇编对照
 python -m ASM.asm ASM/example.asm --run    # 翻译 + 上机执行（带跟踪）
 ```
@@ -489,5 +492,9 @@ python -m ASM.asm ASM/example.asm --run    # 翻译 + 上机执行（带跟踪�
 - [x] 端口/栈分家：SP 初始 0→0xFC，0xFC~0xFF 成 I/O 阁楼、栈从 0xFB 向下与
   数据区相向而行（tenth 相撞花絮推动的内存地图正式化）；端口/帧缓冲/全部
   冻结程序零改动；tenth 回归惯例端口 0xFE 全绿 = 修复验收现场（测试 377 项）
+- [x] NOT/ROL/ROR 指令化（0xB0/0xB8/0xC0 段，32→35 条）：ROL/ROR 为穿 C 的
+  链式旋转（cin 接 C——c_from 的第三、四位 FLAG 客户），**多字节数从此能
+  移位**（SHL lo/ROL hi）；NOT 只写 Z/N 保链（NEG 惯用法 NOT+INC）；ALU 的
+  旧自转版旋转同步升级为链式并双 cin 穷举（197.3 万项）；测试 430+266 项
 - [ ] 阶段四余项：变长指令、多周期状态机、Breakout/猜数字等交互程序
 
