@@ -44,6 +44,8 @@ def test_encode_diff():
     check("ROR 编码段 0xC0", assemble("ROR R0"), [0xC0, 0])
     for name in isa.JUMPS:
         check(f"{name}", assemble(f"{name} 0x42"), isa.I_JMP(name, 0x42))
+    for name in isa.JR_OPS:                       # 写目标 0x42，偏移 = 0x42−(0+2) = 0x40
+        check(f"{name}", assemble(f"{name} 0x42"), isa.I_JR(name, 0x40))
     check("CALL", assemble("CALL 0x42"), isa.I_CALL(0x42))
     check("RET", assemble("RET"), isa.I_RET())
     for r in range(8):
@@ -85,6 +87,15 @@ def test_labels_directives():
     check(".org 前进补零", assemble("HALT\n.org 0x04\n.db 9"), [0xF0, 0, 0, 0, 9])
     check("标号与指令同行", assemble("l: DEC R0\nJNZ l"),
           isa.I_UN("DEC", 0) + isa.I_JMP("JNZ", 0))
+    check("JR 向前标号", assemble("JR skip\nLDI R1, #1\nskip: HALT")[:2], [0xC8, 0x02])
+    check("JRNZ 向后标号", assemble("l: DEC R0\nJRNZ l")[2:], [0xCA, 0xFC])
+    check("#标号 立即数", assemble("LDI R0, #msg\nHALT\nmsg: .db 7")[:2], [0x00, 0x04])
+    # 位置无关的字节级证明：同一块代码摆到 0x00 与 0x80
+    blk = "blk:\n LDI R0, #5\n LDI R1, #0\nlp: ADD R1, R0\n DEC R0\n {} lp\n HALT\n"
+    for j, same in (("JRNZ", True), ("JNZ", False)):
+        a = assemble(blk.format(j))
+        b = assemble("JMP blk\n.org 0x80\n" + blk.format(j))[0x80:]
+        check(f"PIC·{j} 两基址字节{'相同' if same else '不同'}", a == b, same)
 
 
 def test_label_rename():
@@ -119,6 +130,8 @@ def test_errors():
     check("地址缺括号", raises("LD R0, 0x80", "方括号"), True)
     check(".org 后退", raises("HALT\n.org 0", "只许前进"), True)
     check("错误含行号", raises("LDI R0, #1\nFOO", "第 2 行"), True)
+    check("JR 偏移越界", raises("JR far\n.org 0xA0\nfar: HALT", "超出 ±127"), True)
+    check("#标号未定义", raises("LDI R0, #nowhere", "未定义标号"), True)
 
 
 # ---------- ④ 端到端：汇编 → 上机 → 与 Python 对账 ----------

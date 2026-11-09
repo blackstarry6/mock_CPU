@@ -17,7 +17,8 @@
           （INC/DEC 的"C 保持"——进位链中间可安全步进指针，
           对齐 x86 INC 保全 CF / 6502 INX 不碰 C 的设计）
   jump    PC 下一拍：None=顺序 +2 / 条件名 / "CALL"=压返回地址并跳 /
-          "RET"=弹返回地址 / "HALT"=停机
+          "RET"=弹返回地址 / "HALT"=停机 / "R"+条件名（RJMP、RJZ…）=
+          相对跳转（目标 = pc+2+带符号偏移——控制流位置无关）
   c_from  加法器/旋转器进位输入的 3 选 1：ZERO=接地（ADD）/ ONE=接电源
           （SUB 补码的 +1）/ FLAG=接 C 标志（ADC/SBB/ROL/ROR 的反馈线）/
           None=不关心
@@ -68,6 +69,17 @@ MICROCODE = {
     "JN":  Signals(None, None, None, None, False, "JN"),
     "JNN": Signals(None, None, None, None, False, "JNN"),
     "JV":  Signals(None, None, None, None, False, "JV"),
+    # ---- 相对跳转（JR 族，0xC8 段）：jump 字段 R 前缀 = "相对"——条件照旧，
+    #      目标改为"下一条地址 + 带符号偏移"：控制流位置无关（PIC 雏形，
+    #      6502 的分支族同款：短距相对 ±128 与长距绝对 JMP 并存）----
+    "JR":   Signals(None, None, None, None, False, "RJMP"),
+    "JRZ":  Signals(None, None, None, None, False, "RJZ"),
+    "JRNZ": Signals(None, None, None, None, False, "RJNZ"),
+    "JRC":  Signals(None, None, None, None, False, "RJC"),
+    "JRNC": Signals(None, None, None, None, False, "RJNC"),
+    "JRN":  Signals(None, None, None, None, False, "RJN"),
+    "JRNN": Signals(None, None, None, None, False, "RJNN"),
+    "JRV":  Signals(None, None, None, None, False, "RJV"),
     # ---- 寄存器间接寻址：地址来自指针寄存器（自修改代码的硬件替代）----
     "LDX": Signals("REG_IND", None, None, "RF",      False, None),
     "STX": Signals("RF_SELF", None, None, "MEM_IND", False, None),
@@ -91,7 +103,13 @@ def signals(name):
 
 
 def condition_met(cond, flags):
-    """跳转条件判断（组合逻辑）：flags 为当前标志位字典。"""
+    """跳转条件判断（组合逻辑）：flags 为当前标志位字典。
+
+    R 前缀（RJMP/RJZ/…）是相对跳转族：条件与绝对族相同、只是目标算法不同
+    （由 cpu 负责）——这里剥掉前缀，复用同一张条件表。
+    """
+    if cond.startswith("RJ"):
+        cond = cond[1:]
     Z, N, C, V = flags["Z"], flags["N"], flags["C"], flags["V"]
     return {
         "JMP": True,

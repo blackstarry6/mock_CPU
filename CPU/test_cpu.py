@@ -75,6 +75,8 @@ def test_isa():
             check(f"{name} R{r}", isa.decode(*isa.I_UN2(name, r)), (name, r, None))
     for name in isa.JUMPS:
         check(f"{name}", isa.decode(*isa.I_JMP(name, 0x42)), (name, None, 0x42))
+    for name in isa.JR_OPS:
+        check(f"{name}", isa.decode(*isa.I_JR(name, -6)), (name, None, 0xFA))
     check("CALL", isa.decode(*isa.I_CALL(0x42)), ("CALL", None, 0x42))
     check("RET", isa.decode(*isa.I_RET()), ("RET", None, None))
     for r in range(8):
@@ -678,6 +680,64 @@ def test_bitops():
         check(f"NEG({a}) = NOT+INC", cpu.rf.read(0), (-a) & 0xFF)
 
 
+# ---------- ⑪ 相对跳转 JR 族：控制流位置无关（PIC 雏形） ----------
+
+def test_jr():
+    """JR 族：目标 = 下一条地址 + 带符号偏移；与绝对跳转共存（6502 分支族同款）。"""
+    # 微码：R 前缀哨兵，与绝对族条件逐一对应
+    check("微码·JR 族 = R+绝对族条件",
+          [control.MICROCODE[n].jump for n in isa.JR_OPS], ["R" + j for j in isa.JUMPS])
+
+    # 向前：JR +2 跳过毒药
+    cpu, _, h = run_prog(isa.I_JR("JR", 2) + isa.I_LDI(1, 0xEE) + isa.I_HALT())
+    check("JR 向前跳过毒药", (cpu.rf.read(1), h), (0, True))
+
+    # 向后：JRNZ 倒数循环与 JNZ 版差分（同一算法，只换跳转族）
+    body = (isa.I_LDI(0, 5) + isa.I_LDI(1, 0)
+            + isa.I_ALU("ADD", 1, 0) + isa.I_UN("DEC", 0))               # 循环头 0x04
+    cpu_r, _, _ = run_prog(body + isa.I_JR("JRNZ", -6) + isa.I_HALT())   # 0x0A−6 = 0x04
+    cpu_a, _, _ = run_prog(body + isa.I_JMP("JNZ", 0x04) + isa.I_HALT())
+    check("JRNZ 循环 ≡ JNZ 循环", (cpu_r.rf.read(1), cpu_a.rf.read(1)), (15, 15))
+
+    # 条件：Z 真跳 / Z 假落空 / C=0（借位）JRNC 跳
+    setup = isa.I_LDI(0, 7) + isa.I_ALU("CMP", 0, 0)                    # Z=1，占 0x00-0x03
+    cpu, _, _ = run_prog(setup + isa.I_JR("JRZ", 2) + isa.I_LDI(1, 0xEE) + isa.I_HALT())
+    check("JRZ 条件真·跳", cpu.rf.read(1), 0)
+    cpu, _, _ = run_prog(setup + isa.I_JR("JRNZ", 2) + isa.I_LDI(1, 0xEE) + isa.I_HALT())
+    check("JRNZ 条件假·落空", cpu.rf.read(1), 0xEE)
+    setup = isa.I_LDI(0, 3) + isa.I_LDI(1, 5) + isa.I_ALU("CMP", 0, 1)  # C=0，占 0x00-0x05
+    cpu, _, _ = run_prog(setup + isa.I_JR("JRNC", 2) + isa.I_LDI(7, 0xEE) + isa.I_HALT())
+    check("JRNC 借位·跳", cpu.rf.read(7), 0)
+
+    # 偏移边界：+127 与 −128（目标格直接烧 HALT）
+    cpu = CPU(isa.I_JR("JR", 127))                                       # 0x02+127 = 0x81
+    cpu.ram.data[0x81] = 0xF0
+    cpu.run()
+    check("JR +127 边界", (cpu.pc.value, cpu.halted), (0x81, True))
+    cpu = CPU(isa.I_JMP("JMP", 0x90) + [0] * (0x90 - 2) + isa.I_JR("JR", -128))
+    cpu.ram.data[0x12] = 0xF0                                            # 0x92−128 = 0x12
+    cpu.run()
+    check("JR −128 边界", (cpu.pc.value, cpu.halted), (0x12, True))
+
+    # 跨 0 回绕：0x00 处 JR −4 → 0x02−4 = 0xFE（mod 256）
+    cpu = CPU(isa.I_JR("JR", -4))
+    cpu.ram.data[0xFE] = 0xF0
+    cpu.run()
+    check("JR 跨 0 回绕", (cpu.pc.value, cpu.halted), (0xFE, True))
+
+    # JR 不动标志（同绝对跳转）
+    prog = (isa.I_LDI(0, 255) + isa.I_LDI(1, 1) + isa.I_ALU("ADD", 0, 1)  # C=1、Z=1
+            + isa.I_JR("JR", 0) + isa.I_HALT())
+    cpu, _, _ = run_prog(prog)
+    check("JR 不动标志", (cpu.flags()["C"], cpu.flags()["Z"]), (1, 1))
+
+    # ★ 位置无关：同一块 JR 代码摆在 0x00 与 0x40，行为一致
+    blk = body + isa.I_JR("JRNZ", -6) + isa.I_HALT()
+    cpu_lo, _, _ = run_prog(blk)
+    cpu_hi, _, _ = run_prog(isa.I_JMP("JMP", 0x40) + [0] * (0x40 - 2) + blk)
+    check("★位置无关·两基址同结果", (cpu_lo.rf.read(1), cpu_hi.rf.read(1)), (15, 15))
+
+
 def main():
     for name, fn in [
         ("ISA 编解码往返", test_isa),
@@ -689,6 +749,7 @@ def main():
         ("带进位加减 ADC/SBB", test_carry),
         ("INC/DEC 保持 C/V", test_inc_dec_carry),
         ("位操作单目 NOT/ROL/ROR", test_bitops),
+        ("相对跳转 JR 族", test_jr),
         ("循环累加差分", test_loop_sum),
         ("循环乘法差分", test_loop_mul),
         ("斐波那契差分", test_fibonacci),

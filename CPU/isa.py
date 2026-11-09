@@ -19,6 +19,9 @@
     0xB0-0xB7  NOT Ri               按位取反（NEG 惯用法：NOT + INC = 0−a）
     0xB8-0xBF  ROL Ri               循环左移经 C（多字节移位链：SHL lo / ROL hi）
     0xC0-0xC7  ROR Ri               循环右移经 C（SHR hi / ROR lo）
+    0xC8-0xCF  JR JRZ JRNZ JRC JRNC JRN JRNN JRV [off]
+                                    相对跳转：目标 = 下一条地址 + 带符号偏移
+                                    （±127，控制流位置无关——PIC 雏形；条件顺序同 JUMPS）
     0xE0       CALL [target]       调用子程序（返回地址压栈）
     0xE1       RET                 返回（弹出返回地址装回 PC）
     0xF0       HALT
@@ -38,14 +41,17 @@ _PUSH_BASE, _POP_BASE = 0x80, 0x88
 _LDX_BASE, _STX_BASE = 0x90, 0x98
 _ADC_BASE, _SBB_BASE = 0xA0, 0xA8     # 填操作码空洞：不动既有编码
 _UN2_BASE = 0xB0
+_JR_BASE = 0xC8
 
 ALU_OPS = ("ADD", "SUB", "AND", "OR", "XOR", "MUL", "CMP")
 CARRY_OPS = ("ADC", "SBB")    # 带进位加减：独立编码段，数据通路复用 ADD/SUB
 UN_OPS = ("INC", "DEC", "SHL", "SHR")
 UN2_OPS = ("NOT", "ROL", "ROR")   # 位操作单目第二段：ALU 早已实现，此处补 ISA 身份
 JUMPS = ("JMP", "JZ", "JNZ", "JC", "JNC", "JN", "JNN", "JV")
+JR_OPS = ("JR", "JRZ", "JRNZ", "JRC", "JRNC", "JRN", "JRNN", "JRV")   # 相对跳转族（条件顺序同 JUMPS）
 MNEMONICS = (("LDI", "MOV", "LD", "ST", "LDX", "STX") + ALU_OPS + CARRY_OPS
-             + UN_OPS + UN2_OPS + JUMPS + ("PUSH", "POP", "CALL", "RET", "HALT"))
+             + UN_OPS + UN2_OPS + JUMPS + JR_OPS
+             + ("PUSH", "POP", "CALL", "RET", "HALT"))
 
 
 # ---------- 汇编辅助：助记符 → 机器码（每条两字节） ----------
@@ -75,6 +81,10 @@ def I_UN2(name, r):
 
 def I_JMP(name, target):
     return [_JMP_BASE | JUMPS.index(name), target & 0xFF]
+
+
+def I_JR(name, off):
+    return [_JR_BASE + JR_OPS.index(name), off & 0xFF]   # 偏移按补码存（-128..127）
 
 def I_CALL(target):
     return [OP_CALL, target & 0xFF]
@@ -143,6 +153,8 @@ def decode(op, arg):
         return UN2_OPS[(op - _UN2_BASE) >> 3], op & 7, None
     if _JMP_BASE <= op <= 0x7F:
         return JUMPS[op - _JMP_BASE], None, arg & 0xFF
+    if _JR_BASE <= op <= _JR_BASE + len(JR_OPS) - 1:
+        return JR_OPS[op - _JR_BASE], None, arg & 0xFF   # 偏移字节原样，按补码解读
     if op == OP_CALL:
         return "CALL", None, arg & 0xFF
     if op == OP_RET:
@@ -169,6 +181,8 @@ def disasm(op, arg):
         return f"{name} R{reg}"
     if name in JUMPS:
         return f"{name} {other:#04x}"
+    if name in JR_OPS:
+        return f"{name} {other - 256 if other > 127 else other:+d}"
     if name == "CALL":
         return f"CALL {other:#04x}"
     if name == "RET":

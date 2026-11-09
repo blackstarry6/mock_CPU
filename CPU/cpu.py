@@ -103,7 +103,11 @@ class CPU:
             self.sp.d(sp_new)
             self.pc.load(ret)                         # 沿记下的路回家
         elif sig.jump is not None and control.condition_met(sig.jump, self.flags()):
-            self.pc.load(other)
+            if sig.jump.startswith("RJ"):                 # 相对跳转：目标 = 下一条 + 偏移
+                nxt, _, _ = add8(self.pc.value, 2)
+                self.pc.load(add8(nxt, other)[0])         # 补码偏移：加法器不必知道正负
+            else:
+                self.pc.load(other)
         else:
             nxt, _, _ = add8(self.pc.value, 2)
             self.pc.load(nxt)

@@ -4,12 +4,12 @@
     标号       name:            可独占一行，也可与指令同行（l: DEC R0）
     注释       ; 到行尾
     寄存器     R0~R7（大小写不敏感）
-    立即数     #5 / #0x1F / #0b101
+    立即数     #5 / #0x1F / #0b101 / #标号（取标号的地址作立即数）
     内存地址   [0x80] 或 [标号]
-    跳转目标   标号名或数字
+    跳转目标   标号名或数字（JR 族同样写目标，偏移由汇编器算，越界带行号报错）
     伪指令     .org 0x80        其后内容放到该地址（中间补 0，只许前进）
                .db 1,2,"AB"     直接放数据/字符串（ASCII 展开；串内勿含逗号）
-    指令       与 isa.MNEMONICS 一致的全部 35 条（大小写不敏感）
+    指令       与 isa.MNEMONICS 一致的全部 43 条（大小写不敏感）
 
 两遍扫描：第一遍定位（位置计数器 LC 数地址、建符号表），第二遍生成
 （查表填跳转目标）。编码规则的单一事实源在 isa.py——本模块全部经
@@ -50,6 +50,8 @@ _SIGS.update({name: (("reg",), lambda r, _n=name: isa.I_UN2(_n, r))
               for name in isa.UN2_OPS})
 _SIGS.update({name: (("target",), lambda t, _n=name: isa.I_JMP(_n, t))
               for name in isa.JUMPS})
+_SIGS.update({name: (("rtarget",), lambda off, _n=name: isa.I_JR(_n, off))
+              for name in isa.JR_OPS})
 _SIGS["CALL"] = (("target",), isa.I_CALL)
 _SIGS["RET"] = ((), isa.I_RET)
 _SIGS["PUSH"] = (("reg",), isa.I_PUSH)
@@ -141,13 +143,18 @@ def _pass1(stmts):
 
 # ---------- 第二遍：生成（查表编码） ----------
 
-def _operand(no, kind, tok, symbols):
+def _operand(no, kind, tok, symbols, here=0):
     if kind == "reg":
         return _reg(no, tok)
     if kind == "imm":
         if not tok.startswith("#"):
             raise AsmError(f"第 {no} 行：立即数需要 # 前缀（如 #5），得到 {tok!r}")
-        return _num(no, tok[1:])
+        inner = tok[1:].strip()
+        if _IDENT_RE.fullmatch(inner):         # #标号：取标号地址作立即数
+            if inner not in symbols:
+                raise AsmError(f"第 {no} 行：未定义标号 {inner!r}")
+            return symbols[inner]
+        return _num(no, inner)
     if kind == "addr":
         if not (tok.startswith("[") and tok.endswith("]")):
             raise AsmError(f"第 {no} 行：地址需要方括号（如 [0x80]），得到 {tok!r}")
@@ -157,6 +164,13 @@ def _operand(no, kind, tok, symbols):
                 raise AsmError(f"第 {no} 行：未定义标号 {inner!r}")
             return symbols[inner]
         return _num(no, inner)
+    if kind == "rtarget":                      # JR 族：写目标，偏移由汇编器算
+        target = _operand(no, "target", tok, symbols)
+        off = target - (here + 2)              # 从下一条指令量起（6502 同款）
+        if not -128 <= off <= 127:
+            raise AsmError(f"第 {no} 行：相对跳转偏移 {off:+d} 超出 ±127"
+                           f"（目标 {target:#04x}）——远跳请用绝对 JMP")
+        return off
     # kind == "target"
     if _IDENT_RE.fullmatch(tok):
         if tok not in symbols:
@@ -179,7 +193,8 @@ def _pass2(stmts, symbols):
                 out.extend(_db_bytes(st.no, item))
             continue
         kinds, enc = _SIGS[st.mnemonic]
-        args = [_operand(st.no, k, t, symbols) for k, t in zip(kinds, st.ops)]
+        args = [_operand(st.no, k, t, symbols, len(out))   # len(out) 即当前地址
+                for k, t in zip(kinds, st.ops)]
         out.extend(enc(*args))
     return out
 
