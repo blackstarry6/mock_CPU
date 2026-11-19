@@ -157,7 +157,57 @@ LSB-first 表示在这里展现了第二个好处——**移位操作退化成�
 - `alu_rol`：循环左移， bit7 绕回 bit0，[bits[-1]] + bits[:-1]
 - `alu_ror`：循环右移， bit0 绕回 bit7，bits[1:] + [bits[0]]
 
+```python
+def alu_shl(a):
+    bits = to_bits(a)
+    out = [0] + bits[:-1]        # 低位补 0，bit7 移出进 C
+    return from_bits(out), _mkflags(out, c=bits[-1])
+ 
+ 
+def alu_shr(a):
+    bits = to_bits(a)
+    out = bits[1:] + [0]         # 逻辑右移，高位补 0，bit0 移出进 C
+    return from_bits(out), _mkflags(out, c=bits[0])
+ 
+ 
+def alu_rol(a):
+    bits = to_bits(a)
+    out = [bits[-1]] + bits[:-1]  # bit7 绕回 bit0
+    return from_bits(out), _mkflags(out, c=bits[-1])
+ 
+ 
+def alu_ror(a):
+    bits = to_bits(a)
+    out = bits[1:] + [bits[0]]    # bit0 绕回 bit7
+    return from_bits(out), _mkflags(out, c=bits[0])
+```
+
 > 后注：ROL/ROR 后在指令化一站升级为穿 C 链式旋转（`out = [cin] + bits[:-1]`，多字节移位链 SHL lo / ROL hi 的原语）——本节描述的是 ALU 站当时的实现。
+>
+> ```python
+> def alu_rol(a, b=0, cin=0):
+>     bits = to_bits(a)
+>     out = [cin] + bits[:-1]      # C 绕入 bit0，bit7 转出回 C
+>     return from_bits(out), _mkflags(out, c=bits[-1])
+> 
+> 
+> def alu_ror(a, b=0, cin=0):
+>     bits = to_bits(a)
+>     out = bits[1:] + [cin]       # C 绕入 bit7，bit0 转出回 C
+>     return from_bits(out), _mkflags(out, c=bits[0])
+> 
+> ```
+>
+> 旧版的 `alu_rol` 是**字节内自转**，bit7 绕回 bit0 走的是“内部捷径”，C 标志只是**旁观看一眼**（记下转出的位），不参与传送。
+>
+> 而 `SHL lo / ROL hi` 这条多字节移位链需要的是**穿 C 旋转**——bit7 先**出去到 C**，C 里的旧值**进来当 bit0**。
+>
+> | 变体       | 语义                 | 代表                                          |
+> | ---------- | -------------------- | --------------------------------------------- |
+> | 字节内自转 | b7→b0 直通，C 只旁观 | x86 的 ROL/ROR、Z80 的 RLCA/RRCA              |
+> | 穿 C 旋转  | b7→C→b0，C 是传送带  | 6502 的 ROL/ROR、x86 的 RCL/RCR、Z80 的 RL/RR |
+>
+> 穿 C 之后有个值得注意的行为：**一个位从 bit7 走到 bit0 需要两次 ROL**——第一次 ROL 它出去进 C（结果位里没有它），第二次 ROL 它才从 C 进来。
 
 
 
@@ -224,3 +274,33 @@ def alu(op, a, b=0):
 **`README.md`**：补充了结构说明、运行方式、标志位约定和路线图。
 
 
+
+
+
+# 状态确认与后续工作
+
+“组合逻辑全部完成”（门 → 加法器 → ALU → 穷举测试），接下来就进入**时序逻辑阶段**——这也是本项目从“电路仿真”变成“CPU”的分水岭。
+
+## 阶段一：时序骨架
+
+实现 `DFlipFlop` → `Register` → 时钟 `tick()` 这条线，核心就是“current/next 二分 + 统一提交”的纪律。
+
+验收标准也很明确：**寄存器在两次 tick 之间保持值不变，只在 tick 时刻采纳新值**——用测试证明“记忆”这件事真的发生了。这步完成意味着 SR 锁存器那个“反馈环”问题被正式解决。
+
+## 阶段二：存储部件
+
+- **寄存器堆**：比如 R0~R7，带两个读端口、一个写端口——读端口就是 MUX，写端口的地址选择就是译码器，正好补上之前讨论缺失的那两个组合部件
+- **内存（RAM）**：一个字节数组 + 地址寻址
+- **PC（程序计数器）**：特殊寄存器，支持“自增 1”和“跳转时装载”两种 next 来源
+
+## 阶段三：指令集与控制器
+
+这是设计决策最多的一步：
+
+1. **定义指令集**：取数/存数、ALU 运算（复用现成的 `alu.py`）、比较（CMP，本质是 SUB 但不写回，只更新标志位）、条件跳转（消费 Z/N/C/V 标志——标志位为什么重要到这一步就体现出来了）
+2. **译码器**：操作码 → 控制信号
+3. **选择微架构**：一拍一条指令（简单直接），还是 FETCH→DECODE→EXECUTE 的多周期状态机（更接近真实硬件，也更能发挥阶段一的时钟设计）。我的建议是**先用“一拍一条”跑通，再演化成状态机**，避免第一次就同时调试两个新东西
+
+## 阶段四：整机与验证
+
+`CPU` 类挂上 `step()` / `run()`，写一个小测试程序（比如“用循环加法模拟乘法”或“斐波那契数列”），把执行结果和 Python 直接算的结果对照——给 CPU 也做一套“差分测试”，风格上和 `test_alu.py` 一脉相承。如果到时还想更有仪式感，可以加一个迷你汇编器（助记符 → 机器码）。
