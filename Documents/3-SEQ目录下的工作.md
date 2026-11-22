@@ -2,23 +2,40 @@
 
 # 概述
 
-```
+```bash
 mock_CPU/
 ├── ALU/          # 组合算术部件（已完成）
 │   ├── gate.py / full_adder.py / alu.py / test_alu.py
 ├── SEQ/          # 时序部件：阶段一建这个
 │   ├── dff.py          # DFlipFlop：current/next + tick
 │   ├── register.py     # 8 位寄存器，同拍读写纪律
-│   ├── test_seq.py     # "两次 tick 之间保持、tick 时刻更新"的行为测试
-│   └── (阶段二再添 register_file.py、pc.py等)
-├── MEM/          # 阶段二：内存
-├── CPU/          # 阶段三四：指令集与整机集成
+│   ├── test_seq.py #"两次 tick 之间保持、tick 时刻更新"的行为测试
+│   │
+│   ├── register_file.py  # 阶段二：寄存器堆 R0~R7
+│   ├── pc.py             # 阶段二：程序计数器
+│   ├── test_register_file.py
+│   └── test_pc.py
+│   │
+├── COMB/          # 阶段二新文件夹：组合逻辑部件库
+│   ├── mux.py       #数据选择器：门级 2选1 → 8位宽MUX → 8选1
+│   ├── decoder.py   #译码器：n位地址 → 2^n 选一（one-hot），带使能
+│   └── test_comb.py
+├── MEM/                  # 阶段二新文件夹：存储
+│   ├── ram.py            #   256 字节同步 RAM
+│   └── test_ram.py
+├── CPU/      # 阶段三四：指令集与整机集成
 └── README.md / 知识存档.md / .gitignore
 ```
 
 **阶段一的 SEQ/ 不需要 import ALU/ 里的任何东西**——这是刻意的好消息。DFlipFlop 是行为级建模（显式状态变量 + tick），它不依赖任何门电路，天然是独立模块。
 
-第一次跨文件夹引用要等到阶段三/四的 `CPU/` 集成（CPU 同时需要 ALU 和 SEQ），到那时再把导入方式改成从项目根目录运行的包风格（比如 `from ALU.alu import alu`）。
+第一次跨文件夹引用是**阶段二**。寄存器堆的读端口要用门搭 MUX（需要 `ALU/gate.py`），PC 自增要复用 `ALU` 的 `add8`。而现在的代码全是“文件夹内平铺导入"（`from gate import ...`，只在各自目录里跑得起来），跨文件夹直接失效。正确解法是**把项目改成包（package）结构**。
+
+- 现有文件的内部导入改成相对导入：`ALU/full_adder.py` 和 `ALU/alu.py` 改成 `from .gate import ...`；`SEQ/register.py` 改成 `from .dff import ...`（各只改 1~2 行）
+- 所有新模块用绝对包导入：`from ALU.gate import AND`、`from .register import Register`
+- 运行方式统一为从**项目根目录**：`python -m SEQ.test_seq`、`python -m ALU.alu`（`-m` 表示按模块运行，相对导入才能生效）
+
+分类逻辑和现有结构一脉相承：ALU=算术、SEQ=时序、COMB=通用组合件、MEM=存储、（将来）CPU=集成。MUX 和译码器放 `COMB/` 而不是塞进某个使用者内部，因为阶段三的控制器（指令译码）和数据通路（PC 下一拍来源选择、ALU 操作数选择）马上还要用它们。
 
 
 
@@ -154,7 +171,7 @@ class Register:
 
 
 
-## test_seq.py【阶段一建立，后续持续更新】
+## test_seq.py【阶段一】
 
 **SEQ/test_seq.py** —— 7 组测试验证两条核心纪律：
 
@@ -187,3 +204,99 @@ clk.tick()                  # 统一提交
 这也是反例（`regs[0]=regs[1]; regs[1]=regs[0]` 原地交换失败）的正面版本。断言卡住四个时间点：打拍**前** A、B 都必须是旧值（如果 `d()` 会立刻改 `q`，这两条立刻失败），打拍**后**同时互换，外加 `cycles==1`。这个测试证明的不只是“交换成功了”，而是“**同拍读旧写新**的纪律被整个体系遵守”——将来 CPU 的每一拍（取指、执行、写回）都依赖这条纪律。
 
 **⑦ test_clock_multi——CPU 主循环的最小预演。** 3 拍循环“读旧值 → `d(旧值+1)` → 打拍”，值 1→2→3→4，`cycles==3`。这个“每拍读旧算新再提交”的结构，就是未来 CPU `step()`（fetch → decode → execute → 提交）的缩影。
+
+
+
+## 包结构改造
+
+目录下新增`__init__.py`。
+
+SEQ：时序部件包（D 触发器 → 寄存器 → 寄存器堆/PC）。
+
+
+
+
+
+## register_file.py（阶段二的主角）
+
+- 存储 = 8 个现成的 `Register`，又一次“下层搭上层”
+- **双读端口**：`read(addr)` 是纯组合操作（导线直通），用门级 AND-OR 阵列从 8 个寄存器值里选出目标——规模很小（8 位 × 8 输入），性能无压力
+- **单写端口**：`write(addr, value)` 用译码器产生 one-hot，只有被寻址的那个寄存器收到 `d()`，其余保持；`tick()` 全体打拍
+- 关键时序性质（会专门测试）：**同拍读旧写新**——先 `write(3, 0x55)` 再 `read(3)`，读到的仍是旧值，打拍后才变。这是边沿触发寄存器堆的真实行为，也是未来 CPU“写回和取操作数在同一拍”不出错的保证
+
+```python
+class RegisterFile:
+    """count 个 width 位寄存器（count 需为 2 的幂）。"""
+ 
+    def __init__(self, count=8, width=8):
+        assert count & (count - 1) == 0, "寄存器数量必须是 2 的幂"
+        self.count = count
+        self.width = width
+        self.sel_bits = count.bit_length() - 1
+        self.regs = [Register(f"R{i}", width=width) for i in range(count)]
+ 
+    def read(self, addr):
+        """读端口（组合）：译码 + 选择阵列，从 count 个寄存器中选出当前值。"""
+        return mux_word([r.value for r in self.regs],
+                        addr & (self.count - 1), self.width)
+ 
+    def write(self, addr, value):
+        """写端口（声明）：仅被寻址的寄存器收到数据，时钟沿才生效。"""
+        onehot = decode(addr & (self.count - 1), self.sel_bits)
+        for reg, sel in zip(self.regs, onehot):
+            if sel:
+                reg.d(value)
+ 
+    def tick(self):
+        for reg in self.regs:
+            reg.tick()
+```
+
+
+
+
+
+
+
+## pc.py（阶段二)
+
+- 本质是一颗 8 位寄存器 + 下一拍来源的选择，对外三个动作：
+  - `incr()`：暂存 `PC+1`——**刻意用 add8 走加法器实现**而不是 Python 的 `+1`，对应真实 CPU“PC 自增经过 ALU"的结构
+  - `load(target)`：暂存跳转目标
+  - `tick()`：提交。同一拍两者都调时后调覆盖先调（DFF 导线语义，约定控制器每拍只调一个）
+- 8 位 PC 意味着 256 字节程序空间，与 8 位整机定位一致
+
+```python
+class ProgramCounter:
+    def __init__(self, width=8, init=0):
+        self.reg = Register("PC", width=width, init=init)
+ 
+    @property
+    def value(self):
+        """当前取指地址（组合读）。"""
+        return self.reg.value
+ 
+    def incr(self):
+        """声明下一拍 PC+1（经 8 位加法器，进位丢弃实现回绕）。"""
+        nxt, _carry, _c6 = add8(self.reg.value, 1)
+        self.reg.d(nxt)
+ 
+    def load(self, target):
+        """声明下一拍装载跳转目标地址。"""
+        self.reg.d(target)
+ 
+    def tick(self):
+        self.reg.tick()
+```
+
+
+
+
+
+## test_register_file.py（阶段二）
+
+
+
+
+
+## test_pc.py（阶段二)
