@@ -252,9 +252,15 @@ class RegisterFile:
             reg.tick()
 ```
 
+注意：
 
+```python
+assert count & (count - 1) == 0, "寄存器数量必须是 2 的幂"   # 护栏①：构造期拦截
+...
+addr & (self.count - 1)                                      # 护栏②：地址掩码
+```
 
-
+护栏②和公式`n_bits = len(words).bit_length() - 1`同源：count 是 2 的幂时，`count - 1` 恰好是“低 k 位全 1”的掩码（8−1=7=`111`），把非法高位的地址静默折回合法范围。**公式、断言、掩码三件套建立在同一条假设上**——“count 需为 2 的幂”就是给这一整组行为立的契约。
 
 
 
