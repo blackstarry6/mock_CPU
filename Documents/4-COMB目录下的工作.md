@@ -126,3 +126,11 @@ bit_i = OR( AND(w0_i,0), AND(w1_i,0), AND(w2_i,1), AND(w3_i,0) )
 
 ## test_comb.py
 
+单独运行指令（在项目根目录下）：
+
+```bash
+python -m COMB.test_comb
+```
+
+共109项，验证方式：真值表穷举 + 使能/截断 。
+

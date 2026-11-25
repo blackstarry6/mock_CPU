@@ -59,7 +59,21 @@ class RAM:
             self.data[(base + i) & self.addr_mask] = byte & self.value_mask
 ```
 
-## 忠实度盘点：RAM 算实现了吗？
+
+
+## test_ram.py
+
+RAM 行为测试，运行指令如下（在项目根目录下执行）：
+
+```bash
+python -m MEM.test_ram
+```
+
+11项，验证方式：烧写/打拍/末次生效/截断
+
+
+
+# 忠实度盘点：RAM 算实现了吗？
 
 先看三条路径各自的忠实度——它们其实并不相同：
 
